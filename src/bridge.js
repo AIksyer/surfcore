@@ -6461,7 +6461,11 @@ async function main() {
         // ── 语音包管理（安装/启停/配置/试听）────────────────────────────
         // 语音引擎不随插件分发，用户在这里按需安装；不装也完全不影响聊天。
         if (url.pathname === '/api/voice/packs' || url.pathname.startsWith('/api/voice/packs/')) {
-          const vp = createVoicePacks(cfg);
+          // 每次请求都重读 config.json：设置页刚改的 voicePacks.dir / socialV2.voice 要立刻生效，
+          // 否则用户"改了路径、刷新又变回去"（2026-10-27 反馈）。
+          let freshCfg = cfg;
+          try { freshCfg = readConfigObject(path.join(ROOT, 'config.json')); } catch {}
+          const vp = createVoicePacks(freshCfg);
           try {
             if (req.method === 'GET' && url.pathname === '/api/voice/packs') {
               sendJson(await vp.list());

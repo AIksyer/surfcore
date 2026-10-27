@@ -96,6 +96,7 @@ function semverCompare(a, b) {
 }
 
 const latestCache = new Map(); // repo -> { tag, url, at }
+const releaseManifestCache = new Map(); // versionUrl -> { json, at }
 
 /**
  * 不消耗 API 配额的最新版本：请求 github.com/<repo>/releases/latest，
@@ -474,7 +475,19 @@ export async function inspectReleaseComponent(component, { fetch = true } = {}) 
   if (!fetch) {
     return { ...base, available: false, installedVersion: installed?.version ?? null, reason: '本次未拉取版本清单' };
   }
-  const remote = await fetchJson(versionUrl);
+  let remote = await fetchJson(versionUrl);
+  if (!remote.ok) {
+    // 第一次失败很常见（GitHub 302 到 objects.githubusercontent 偶发超时）：800ms 后重试一次
+    await new Promise((r) => setTimeout(r, 800));
+    remote = await fetchJson(versionUrl);
+  }
+  if (!remote.ok) {
+    // 还失败就用 6 小时内成功过的清单兜底，并在结果里标 stale
+    const cached = releaseManifestCache.get(versionUrl);
+    if (cached && Date.now() - cached.at < 6 * 3600_000) {
+      remote = { ok: true, json: cached.json, stale: true };
+    }
+  }
   if (!remote.ok) {
     return {
       ...base, available: false,
@@ -483,6 +496,7 @@ export async function inspectReleaseComponent(component, { fetch = true } = {}) 
     };
   }
   const manifest = remote.json ?? {};
+  try { releaseManifestCache.set(versionUrl, { json: manifest, at: Date.now() }); } catch {}
   const latestVersion = String(manifest.version ?? '').trim();
   const asset = pickReleaseAsset(manifest);
   if (!latestVersion || !asset?.url) {

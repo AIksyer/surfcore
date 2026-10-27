@@ -433,6 +433,15 @@ export function createPetService({ stateDir, pluginLog = () => {}, subprocess = 
         }
       }
       await unzip(archive, resolveAppDir());
+      // 卸载时备份过的 data/ 放回来（新装才有意义；更新走 updateFromZip 自己的逻辑）。
+      try {
+        const keepData = path.join(stateDir, 'pet-data-keep', 'data');
+        const appData = path.join(resolveAppDir(), 'data');
+        if (fs.existsSync(keepData) && !fs.existsSync(appData)) {
+          fs.cpSync(keepData, appData, { recursive: true, force: true });
+          pluginLog('pet: 已恢复卸载前的 data/');
+        }
+      } catch {}
       try { fs.rmSync(path.join(resolveAppDir(), 'run.pid'), { force: true }); } catch {}
       if (!appPackage()) return { ok: false, error: '解压后没有 package.json，安装包可能不完整' };
       writeMarker({ source: String(archive) });
@@ -471,6 +480,19 @@ export function createPetService({ stateDir, pluginLog = () => {}, subprocess = 
       return { ok: false, error: String(error?.message ?? error) };
     }
     if (running()) await stop();
+    // 卸载前把用户数据搬出来：data/ 里是聊天记录和设置，删了就没法恢复（2026-10-27 用户实测踩到）。
+    try {
+      const appDir = resolveAppDir();
+      const dataDir = path.join(appDir, 'data');
+      if (fs.existsSync(dataDir)) {
+        const keep = path.join(stateDir, 'pet-data-keep');
+        fs.mkdirSync(keep, { recursive: true });
+        fs.cpSync(dataDir, path.join(keep, 'data'), { recursive: true, force: true });
+        pluginLog('pet: 卸载前已备份 data/ →', keep);
+      }
+    } catch (error) {
+      pluginLog('pet: 备份 data/ 失败（继续卸载）：', String(error?.message ?? error));
+    }
     fs.rmSync(resolveAppDir(), { recursive: true, force: true });
     writeConfig({ installedAt: null });
     pluginLog('pet: removed');
