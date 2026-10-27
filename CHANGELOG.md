@@ -4,6 +4,12 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.6.5] - 2026-10-27
+
+### 变更
+
+- 
+
 ## [0.6.4] - 2026-10-27
 
 ### 修复

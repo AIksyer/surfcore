@@ -43,6 +43,8 @@ export const DEFAULT_MANIFESTS = [
     // 2026-10-27：只起 run.bat 时发语音全 503，用户以为"语音坏了"。
     engineScript: 'gsv.bat',
     enginePort: 9880,
+    repo: 'Mieksido/surfvoicelocal',
+    postInstall: 'scripts/fetch-models.mjs',
     engineWarmupHint: '本地音色引擎加载约 40 秒，期间发语音会失败，稍等再试',
     // 开发期用本地目录；分发期换成 GitHub Releases 的 zip 链接
     url: process.env.SURFCORE_VOICE_LOCAL_URL || devPackUrl('voice-local'),
@@ -62,6 +64,8 @@ export const DEFAULT_MANIFESTS = [
     port: 8767,
     startScript: 'run.bat',
     stopScript: 'stop.bat',
+    repo: 'Mieksido/surfvoicecloud',
+    postInstall: 'scripts/fetch-models.mjs',
     url: process.env.SURFCORE_VOICE_CLOUD_URL || devPackUrl('voice-cloud'),
     requires: { gpu: false, network: true },
     voices: [{ id: 'age12-cloud', label: '小语（云端 · 女童声）' }],
@@ -138,6 +142,22 @@ async function exists(p) {
 }
 
 /** 本地目录直接用；zip 先落到临时文件再用系统 tar 解压（Windows 10+ 自带 bsdtar）。 */
+/** GitHub archive zip 解压后多一层 `<repo>-main/`：把里面的内容提上来。 */
+async function flattenSingleDir(destDir) {
+  let entries = [];
+  try { entries = await fsp.readdir(destDir, { withFileTypes: true }); } catch { return; }
+  const dirs = entries.filter((e) => e.isDirectory());
+  const files = entries.filter((e) => !e.isDirectory());
+  if (dirs.length !== 1 || files.length > 0) return;
+  const inner = path.join(destDir, dirs[0].name);
+  if (await exists(path.join(destDir, 'config.toml'))) return;
+  if (!(await exists(path.join(inner, 'config.toml')))) return;
+  for (const name of await fsp.readdir(inner)) {
+    await fsp.rename(path.join(inner, name), path.join(destDir, name));
+  }
+  await fsp.rm(inner, { recursive: true, force: true });
+}
+
 async function fetchToLocal(cfg, id, src, destDir, onProgress = () => {}) {
   if (/^https?:\/\//i.test(src)) {
     await fsp.mkdir(destDir, { recursive: true });
@@ -231,22 +251,55 @@ export function createVoicePacks(cfg) {
   async function install(id, { force = false } = {}) {
     const m = manifests(cfg).find((x) => x.id === id);
     if (!m) throw new Error(`未知语音包：${id}`);
-    if (activeInstalls.has(id)) throw new Error('这个包正在安装中');
+    // 上一次已经结束（完成/失败）的安装记录要清掉，否则会永远卡在"正在安装中"，
+    // 用户失败后连重试都点不了（2026-10-27 反馈）。
+    if (activeInstalls.has(id)) {
+      const prev = activeInstalls.get(id);
+      if (prev && (prev.phase === '完成' || prev.phase === '失败')) activeInstalls.delete(id);
+      else throw new Error('这个包正在安装中');
+    }
     const dir = packDir(cfg, id);
     if (!force && (await exists(path.join(dir, 'config.toml')))) throw new Error('已经安装过了');
 
-    const rec = { progress: 0, phase: '准备中', startedAt: Date.now(), error: null };
+    const rec = { progress: 0, phase: '准备中', startedAt: Date.now(), error: null, log: '' };
     activeInstalls.set(id, rec);
     // 异步跑，接口立刻返回，前端轮询 status 看进度
     (async () => {
       try {
         await fsp.rm(dir, { recursive: true, force: true });
-        await fetchToLocal(cfg, id, m.url, dir, (p, phase) => {
+        // 安装源：本地开发目录 / 本地 zip / http(s)。开发目录在用户机器上不存在，
+        // 这时退到 GitHub 仓库的 archive zip（代码很小），模型由 postInstall 单独拉。
+        let src = String(m.url || '');
+        const localDir = /^https?:/i.test(src) ? null : path.resolve(src || '.');
+        if (localDir && !(await exists(localDir))) {
+          if (!m.repo) throw new Error(`安装源不存在：${src}（这个包没有配置在线安装地址）`);
+          src = `https://github.com/${m.repo}/archive/refs/heads/main.zip`;
+          rec.phase = '改用在线源';
+        }
+        await fetchToLocal(cfg, id, src, dir, (p, phase) => {
           rec.progress = p;
           rec.phase = phase;
         });
+        await flattenSingleDir(dir);
         if (!(await exists(path.join(dir, 'config.toml')))) {
           throw new Error('包里没有 config.toml，可能下载的是错的文件');
+        }
+        // 模型/运行库不进 git：装完立刻跑包里的 fetch 脚本（会校验 sha256，失败即中止）。
+        if (m.postInstall && (await exists(path.join(dir, m.postInstall)))) {
+          rec.phase = '拉取模型（可能几分钟）';
+          rec.progress = 99;
+          const okPost = await new Promise((resolve) => {
+            const child = spawn(process.execPath, [path.join(dir, m.postInstall)], {
+              cwd: dir, windowsHide: true, env: { ...process.env },
+            });
+            let out = '';
+            const timer = setTimeout(() => { try { child.kill(); } catch {} resolve(false); }, 45 * 60_000);
+            child.stdout?.on('data', (d) => { out = (out + String(d)).slice(-2000); rec.log = out; });
+            child.stderr?.on('data', (d) => { out = (out + String(d)).slice(-2000); rec.log = out; });
+            child.on('error', () => { clearTimeout(timer); resolve(false); });
+            child.on('exit', (code) => { clearTimeout(timer); resolve(code === 0); });
+          });
+          if (!okPost) throw new Error(`模型下载失败：${(rec.log || '').slice(-300) || '看包内日志'}`);
         }
         const state = await readState(cfg);
         state.packs = state.packs || {};
@@ -254,9 +307,11 @@ export function createVoicePacks(cfg) {
         await writeState(cfg, state);
         rec.phase = '完成';
         rec.progress = 100;
+        setTimeout(() => activeInstalls.delete(id), 5000).unref?.();
       } catch (e) {
         rec.error = String(e?.message || e);
         rec.phase = '失败';
+        setTimeout(() => activeInstalls.delete(id), 10 * 60_000).unref?.();
       }
     })();
 
