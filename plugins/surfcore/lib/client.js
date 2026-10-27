@@ -65,6 +65,8 @@ window.__ModuleLoader__.load({
 .qbw-textarea{width:100%;min-height:90px;resize:vertical;line-height:18px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px}
 .qbw-textarea.card{min-height:360px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .qbw-btn{background:#2f6fed;color:#fff;border:none;border-radius:6px;font-size:12.5px;min-height:29px;padding:0 12px;cursor:pointer;white-space:nowrap}
+.qbw-progress{height:6px;background:rgba(255,255,255,.14);border-radius:99px;overflow:hidden}
+.qbw-progress>i{display:block;height:100%;background:#2f6fed;border-radius:99px;transition:width .35s ease}
 .qbw-btn:disabled{opacity:.5;cursor:default}
 .qbw-btn:hover:not(:disabled){background:#2a63d4}
 .qbw-btn2{background:transparent;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary)}
@@ -3206,6 +3208,14 @@ window.__ModuleLoader__.load({
           h("ul", { style: { margin: 0, paddingLeft: "18px", opacity: 0.7 } }, ((p.about && p.about.cons) || []).map((x) => h("li", { key: x }, x)))),
         p.about && p.about.billing ? h("div", { style: { fontSize: "12px", marginTop: "6px", opacity: 0.75 } },
           p.about.billing, h("br"), p.about.disclaimer || "") : null,
+        p.install
+          ? h("div", { style: { marginTop: "8px" } },
+            h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "12px", opacity: 0.85, marginBottom: "4px" } },
+              h("span", null, p.install.phase || "安装中"),
+              h("span", null, (p.install.progress || 0) + "%")),
+            h("div", { className: "qbw-progress" }, h("i", { style: { width: Math.max(2, Math.min(100, p.install.progress || 0)) + "%" } })),
+            p.install.error ? h("div", { className: "qbw-err", style: { marginTop: "6px" } }, p.install.error) : null)
+          : null,
         p.installed && p.dir ? h("div", { style: { fontSize: "12px", marginTop: "4px", opacity: 0.7 } }, "路径：", h("code", null, p.dir)) : null,
         p.enginePort && p.running && p.engineUp === false
           ? h("div", { style: { fontSize: "12px", marginTop: "4px", opacity: 0.85 } },
@@ -4281,6 +4291,15 @@ window.__ModuleLoader__.load({
         return v > 1024 * 1024 ? (v / 1024 / 1024).toFixed(1) + " MB" : Math.max(1, Math.round(v / 1024)) + " KB";
       };
       const kv = (k, v) => h("div", { className: "qbw-kv", key: k }, h("span", null, k), h("span", null, v));
+      const Bar = ({ pct, phase, err }) => {
+        const v = Math.max(0, Math.min(100, Number(pct) || 0));
+        return h("div", { style: { marginTop: "8px" } },
+          h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "12px", opacity: 0.8, marginBottom: "4px" } },
+            h("span", null, phase || "安装中"),
+            h("span", null, `${v}%`)),
+          h("div", { className: "qbw-progress" }, h("i", { style: { width: `${v}%` } })),
+          err ? h("div", { className: "qbw-err", style: { marginTop: "6px" } }, err) : null);
+      };
 
       return h("div", null,
         h("div", { className: "qbw-infobox" },
@@ -4292,8 +4311,26 @@ window.__ModuleLoader__.load({
           st && st.installed ? kv("版本", st.version || "—") : null,
           st && st.installed ? kv("占用", fmt(st.sizeBytes)) : null,
           st && st.installed ? kv("目录", h("code", { className: "qbw-code" }, st.dir)) : null,
+          st && st.installing ? Bar({ pct: st.installing.progress, phase: st.installing.phase, err: st.installing.error }) : null,
           h("div", { className: "qbw-actions" },
-            !st || !st.installed ? h(Btn, { disabled: busy === "install" || !form.source.trim(), onClick: () => act("install") }, busy === "install" ? "安装中…" : "安装") : null,
+            !st || !st.installed ? h(Btn, { disabled: busy === "install" || !form.source.trim(), onClick: async () => {
+              const r0 = await api("/pet/install", { method: "POST", body: {} }).catch((e) => ({ ok: false, error: e.message }));
+              if (r0 && r0.ok === false) { setErr(r0.error); return; }
+              setBusy("install");
+              for (let i = 0; i < 600; i += 1) {
+                await new Promise((r) => setTimeout(r, 1200));
+                const cur = await api("/pet/status").catch(() => null);
+                if (!cur) continue;
+                setSt(cur);
+                const job = cur.installing;
+                if (!job) break;
+                if (job.phase === "失败") { setErr(job.error || "安装失败"); break; }
+                if (job.phase === "完成") break;
+              }
+              setBusy("");
+              if (toast) toast("✓ 安装流程结束");
+              await read();
+            } }, busy === "install" ? "安装中…" : "安装") : null,
             !st || !st.installed ? h("span", { style: { fontSize: "12px", opacity: 0.7 } }, form.source.trim() ? "" : "← 先在下方「安装设置」填安装包地址，按钮才可点") : null,
             st && st.installed && !st.running ? h(Btn, { onClick: () => act("start"), disabled: !!busy }, "启动") : null,
             st && st.installed && st.running ? h(Btn, { kind: "qbw-btn2", onClick: () => act("stop"), disabled: !!busy }, "停止") : null,

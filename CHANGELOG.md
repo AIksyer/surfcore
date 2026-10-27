@@ -4,6 +4,40 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.6.7] - 2026-10-27
+
+### 新增
+
+- **语音包自动装 Python 环境（真正解决"下载完起不来"）**：
+  - 包内新增 `scripts/bootstrap-env.mjs`：找本机 Python 3.10~3.13 → 建 `.venv` → `pip install -r requirements.txt`；
+    本地包再建 `.venv-gsv`（GPT-SoVITS）并按 `requirements-gsv.txt` 装依赖（要求 ≤3.12，torch 还没有 3.13 轮子）。
+  - 安装流程：下载代码 → 拍平 → 拉模型（sha256）→ **装 Python 依赖** → 完成；进度条显示当前阶段。
+  - 启动前检查 `.venv`：没装好直接提示"先卸载再安装一次"，不再让用户对着"启动超时"猜。
+
+### 修复
+
+- `numpy` 约束过窄：Python 3.13 上会退到源码编译并失败（numpy 2.0 无 cp313 轮子）→ 云端包改 `numpy>=2.1`。
+
+### 验证
+
+- 本机 Python 3.13 从零建 venv、装云端包依赖（fastapi / uvicorn / numpy 2.5.4 / piper-tts 1.8 / onnxruntime 1.31），
+  `python -m voxd --config config.toml` 正常监听 8767。
+
+## [0.6.6]
+## [0.6.6] - 2026-10-28
+
+### 新增
+
+- **安装进度条**：
+  - 桌宠：`/pet/install` 改成异步任务，前端轮询 `/pet/status` 的 `installing`（下载 0~80% → 解压 85% → 完成），
+    不再"点了没反应"；Electron 下载复用同一进度通道。
+  - 语音包：卡片里显示进度条（下载中 / 解压中 / 拉取模型 / 完成），失败直接显示原因。
+
+### 修复
+
+- **语音包体积显示错误**：本地包写 7.8GB，实际公开分发下载 ≈1.77GB（vendor 1.71 + models 0.05）；
+  7.8GB 是开发机整目录（含 `.venv` 5.1GB + 日志）。云端包 280MB → ≈60MB。文案同步更新。
+
 ## [0.6.5] - 2026-10-27
 
 ### 变更

@@ -154,7 +154,7 @@ export function detectElectronPath(options = {}) {
 }
 
 /** 下载并解压 Electron 到 <stateDir>/runtime/electron-v<版本>/。 */
-export async function installElectronRuntime({ stateDir, log = () => {}, version = ELECTRON_VERSION, source = 'auto' } = {}) {
+export async function installElectronRuntime({ stateDir, log = () => {}, version = ELECTRON_VERSION, source = 'auto', onProgress = () => {} } = {}) {
   if (!stateDir) throw new Error('缺少 stateDir');
   const dest = path.join(stateDir, 'runtime', `electron-v${version}`);
   const exe = path.join(dest, 'electron.exe');
@@ -178,7 +178,13 @@ export async function installElectronRuntime({ stateDir, log = () => {}, version
       log(`[pet] 下载 Electron ${version}：${url}`);
       const res = await fetch(url, { signal: AbortSignal.timeout(900_000), redirect: 'follow' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(zip));
+      // 进度：读 content-length 算比例（下载阶段占 0~90%）
+      const total = Number(res.headers.get('content-length') || 0);
+      let got = 0;
+      const src2 = Readable.fromWeb(res.body);
+      src2.on('data', (c) => { got += c.length; onProgress(total ? Math.min(90, Math.round((got / total) * 90)) : 5, '下载 Electron'); });
+      await pipeline(src2, fs.createWriteStream(zip));
+      onProgress(95, '解压 Electron');
       fs.mkdirSync(dest, { recursive: true });
       await new Promise((resolve, reject) => {
         const child = spawn('powershell', ['-NoProfile', '-Command',
@@ -342,10 +348,12 @@ export function createPetService({ stateDir, pluginLog = () => {}, subprocess = 
   }
 
   function status() {
+    // 安装进度（前端画条用）
     const cfg = readConfig();
     const pkg = appPackage();
     return {
       ok: true,
+      installing: installJob ? { ...installJob } : null,
       installed: Boolean(pkg),
       running: running(),
       pid: readPid() || null,
@@ -375,11 +383,19 @@ export function createPetService({ stateDir, pluginLog = () => {}, subprocess = 
   async function download(url) {
     ensureDirs();
     const target = path.join(tmpDir, `pet-pack-${Date.now()}.zip`);
-    const res = await fetch(url, { redirect: 'follow' });
+    const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(20 * 60_000) });
     if (!res.ok) throw new Error(`下载失败 HTTP ${res.status}`);
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length < 1024) throw new Error('下载内容过小，可能不是安装包');
-    fs.writeFileSync(target, buf);
+    const total = Number(res.headers.get('content-length') || 0);
+    let got = 0;
+    const out = fs.createWriteStream(target);
+    for await (const chunk of res.body) {
+      got += chunk.length;
+      out.write(chunk);
+      // 0~80% 留给下载，解压/校验占后段
+      setJob({ phase: '下载安装包', progress: total ? Math.min(80, Math.round((got / total) * 80)) : 5, receivedBytes: got, totalBytes: total });
+    }
+    await new Promise((r) => out.end(r));
+    if (got < 1024) throw new Error('下载内容过小，可能不是安装包');
     return target;
   }
 
@@ -402,7 +418,11 @@ export function createPetService({ stateDir, pluginLog = () => {}, subprocess = 
 
   // `sourceOverride`：更新流程（updates.js 下载好的 zip）直接传路径进来，
   // 不覆盖用户在设置页填的 source；安装时解压是"覆盖式"，data/ 等用户数据不会被删。
-  async function install(sourceOverride) {
+  // 安装任务状态：API 立刻返回，前端轮询 /pet/status 的 installing 字段画进度条。
+  let installJob = null;
+  const setJob = (patch) => { installJob = { ...(installJob || {}), ...patch, updatedAt: Date.now() }; };
+
+  async function doInstall(sourceOverride) {
     const cfg = readConfig();
     const source = String(sourceOverride ?? cfg.source ?? '').trim();
     if (!source) return { ok: false, error: '请先填写安装包地址（zip 的本地路径或 http(s) 链接）' };
@@ -432,6 +452,7 @@ export function createPetService({ stateDir, pluginLog = () => {}, subprocess = 
           return { ok: true, ...status() };
         }
       }
+      setJob({ phase: '解压中', progress: 85 });
       await unzip(archive, resolveAppDir());
       // 卸载时备份过的 data/ 放回来（新装才有意义；更新走 updateFromZip 自己的逻辑）。
       try {
@@ -473,6 +494,26 @@ export function createPetService({ stateDir, pluginLog = () => {}, subprocess = 
     try { fs.rmSync(path.join(resolveAppDir(), 'run.pid'), { force: true }); } catch {}
     await new Promise((r) => setTimeout(r, 400));
     return { ok: true, running: pidAlive(pid) ? true : false };
+  }
+
+  /** 异步安装：立刻返回，前端轮询 status().installing 画进度条。 */
+  async function startInstall(sourceOverride) {
+    if (installJob && !['完成', '失败'].includes(installJob.phase)) {
+      return { ok: false, error: '安装正在进行中' };
+    }
+    setJob({ phase: '准备中', progress: 0, error: null });
+    (async () => {
+      try {
+        const r = await doInstall(sourceOverride);
+        if (r && r.ok === false) setJob({ phase: '失败', error: r.error || '安装失败' });
+        else setJob({ phase: '完成', progress: 100 });
+      } catch (error) {
+        setJob({ phase: '失败', error: String(error?.message ?? error) });
+      } finally {
+        setTimeout(() => { installJob = null; }, 10 * 60_000).unref?.();
+      }
+    })();
+    return { ok: true, started: true };
   }
 
   async function remove() {
@@ -612,5 +653,5 @@ export function createPetService({ stateDir, pluginLog = () => {}, subprocess = 
     }
   }
 
-  return { status, configure, install, updateFromZip, remove, start, stop, running };
+  return { status, configure, install: startInstall, startInstall, updateFromZip, remove, start, stop, running };
 }

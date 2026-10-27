@@ -35,7 +35,9 @@ export const DEFAULT_MANIFESTS = [
     id: 'voice-local',
     name: '本地语音包',
     version: '1.0.0',
-    sizeBytes: 7_830_000_000,
+    // 2026-10-28 更正：旧值 7.83GB 是开发机整目录（含 .venv 5.1GB + 日志），
+    // 公开分发实际下载 ≈ 1.77GB（vendor 1.71 + models 0.05）。
+    sizeBytes: 1_900_000_000,
     port: 8765,
     startScript: 'run.bat',
     stopScript: 'stop.bat',
@@ -44,7 +46,7 @@ export const DEFAULT_MANIFESTS = [
     engineScript: 'gsv.bat',
     enginePort: 9880,
     repo: 'Mieksido/surfvoicelocal',
-    postInstall: 'scripts/fetch-models.mjs',
+    postInstall: ['scripts/fetch-models.mjs', 'scripts/bootstrap-env.mjs'],
     engineWarmupHint: '本地音色引擎加载约 40 秒，期间发语音会失败，稍等再试',
     // 开发期用本地目录；分发期换成 GitHub Releases 的 zip 链接
     url: process.env.SURFCORE_VOICE_LOCAL_URL || devPackUrl('voice-local'),
@@ -53,25 +55,25 @@ export const DEFAULT_MANIFESTS = [
     about: {
       summary: '在你自己的电脑上跑，不联网也能说话。',
       pros: ['完全免费', '断网可用', '延迟 1.0~1.5 秒'],
-      cons: ['需要 NVIDIA 显卡（6G 显存以上）', '首次安装 10~20 分钟'],
+      cons: ['需要 NVIDIA 显卡（6G 显存以上）', '下载约 1.8GB，首次装依赖 20~40 分钟'],
     },
   },
   {
     id: 'voice-cloud',
     name: '云端语音包',
     version: '1.0.0',
-    sizeBytes: 280_000_000,
+    sizeBytes: 60_000_000,
     port: 8767,
     startScript: 'run.bat',
     stopScript: 'stop.bat',
     repo: 'Mieksido/surfvoicecloud',
-    postInstall: 'scripts/fetch-models.mjs',
+    postInstall: ['scripts/fetch-models.mjs', 'scripts/bootstrap-env.mjs'],
     url: process.env.SURFCORE_VOICE_CLOUD_URL || devPackUrl('voice-cloud'),
     requires: { gpu: false, network: true },
     voices: [{ id: 'age12-cloud', label: '小语（云端 · 女童声）' }],
     about: {
       summary: '调用火山引擎声音复刻服务，音质最好。',
-      pros: ['延迟 0.5~1.1 秒', '不占显卡', '安装只要 1 分钟'],
+      pros: ['延迟 0.5~1.1 秒', '不占显卡', '安装约 60MB，1~3 分钟'],
       cons: ['按字符计费（火山引擎收取，与本插件无关）', '必须联网', '要自己申请两个密钥'],
       billing: '按字符计费。每天直播 3 小时约 135 万字符/月。不想付费就装本地包，效果接近且不要钱。',
       disclaimer: '这不是推销：两个包功能对等，装哪个都不影响插件其他功能。',
@@ -284,12 +286,15 @@ export function createVoicePacks(cfg) {
         if (!(await exists(path.join(dir, 'config.toml')))) {
           throw new Error('包里没有 config.toml，可能下载的是错的文件');
         }
-        // 模型/运行库不进 git：装完立刻跑包里的 fetch 脚本（会校验 sha256，失败即中止）。
-        if (m.postInstall && (await exists(path.join(dir, m.postInstall)))) {
-          rec.phase = '拉取模型（可能几分钟）';
+        // 后置步骤：先拉模型/运行库（sha256 校验），再建 Python 环境（首次要几分钟）。
+        const postScripts = (Array.isArray(m.postInstall) ? m.postInstall : (m.postInstall ? [m.postInstall] : []))
+          .filter((x) => x);
+        for (const script of postScripts) {
+          if (!(await exists(path.join(dir, script)))) continue;
+          rec.phase = script.includes('bootstrap') ? '安装 Python 依赖（首次 5~40 分钟）' : '拉取模型（可能几分钟）';
           rec.progress = 99;
           const okPost = await new Promise((resolve) => {
-            const child = spawn(process.execPath, [path.join(dir, m.postInstall)], {
+            const child = spawn(process.execPath, [path.join(dir, script)], {
               cwd: dir, windowsHide: true, env: { ...process.env },
             });
             let out = '';
@@ -299,7 +304,7 @@ export function createVoicePacks(cfg) {
             child.on('error', () => { clearTimeout(timer); resolve(false); });
             child.on('exit', (code) => { clearTimeout(timer); resolve(code === 0); });
           });
-          if (!okPost) throw new Error(`模型下载失败：${(rec.log || '').slice(-300) || '看包内日志'}`);
+          if (!okPost) throw new Error(`${script} 失败：${(rec.log || '').slice(-300) || '看包内日志'}`);
         }
         const state = await readState(cfg);
         state.packs = state.packs || {};
@@ -335,6 +340,10 @@ export function createVoicePacks(cfg) {
     if (!m) throw new Error(`未知语音包：${id}`);
     const dir = packDir(cfg, id);
     if (!(await exists(path.join(dir, 'config.toml')))) throw new Error('还没安装');
+    // Python 环境缺失时直接给可操作的提示，别让用户看着"启动超时"猜。
+    if (process.platform === 'win32' && !(await exists(path.join(dir, '.venv', 'Scripts', 'python.exe')))) {
+      throw new Error('Python 环境还没装好：先点「卸载」再点「安装」重新装一次（会自动创建 .venv 并装依赖）');
+    }
     if (await probePort(m.port)) return { ok: true, already: true, port: m.port };
 
     // 本地音色：先把 GPT-SoVITS(9880) 拉起来，否则入口起来了也只能 503。

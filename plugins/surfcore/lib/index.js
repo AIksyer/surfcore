@@ -1866,6 +1866,8 @@ export function apply(ctx) {
   }
 
   // 桌宠：安装 / 卸载 / 启动 / 停止 / 状态（本机文件，不经过桥接）
+  let electronJob = null;
+
   async function handlePet(req, res, url) {
     const suffix = url.pathname.slice(`${API_PREFIX}/pet`.length) || '/status';
     const method = String(req.method || 'GET').toUpperCase();
@@ -1877,6 +1879,7 @@ export function apply(ctx) {
         const detected = detectElectronPath({ cfgPath: petService.status().electronPath || '', appDir: cfgPet, stateDir: STATE_DIR });
         json(res, 200, {
           ...petStatus,
+          installing: petStatus.installing || electronJob || null,
           chat: chatStatus.chat,
           role: chatStatus.role,
           proactive: chatStatus.proactive,
@@ -1911,8 +1914,23 @@ export function apply(ctx) {
         return;
       }
       if (suffix === '/electron-install') {
+        const jobKey = 'electron';
+        electronJob = { phase: '准备下载 Electron', progress: 0, error: null, key: jobKey };
+        const onProgress = (pct, phase) => {
+          if (!electronJob) return;
+          electronJob = { ...electronJob, progress: pct, phase: phase || electronJob.phase, updatedAt: Date.now() };
+        };
         const src = ['github', 'mirror'].includes(String(body.source ?? '')) ? String(body.source) : 'auto';
-        const r = await installElectronRuntime({ stateDir: STATE_DIR, log: (m) => pluginLog(m), source: src });
+        let r;
+        try {
+          r = await installElectronRuntime({ stateDir: STATE_DIR, log: (m) => pluginLog(m), source: src, onProgress });
+          electronJob = { ...electronJob, phase: '完成', progress: 100 };
+        } catch (error) {
+          electronJob = { ...electronJob, phase: '失败', error: String(error?.message ?? error) };
+          throw error;
+        } finally {
+          setTimeout(() => { electronJob = null; }, 60_000).unref?.();
+        }
         try { if (r.electronPath) petService.configure({ electronPath: r.electronPath }); } catch {}
         json(res, 200, r);
         return;
