@@ -3277,6 +3277,14 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
             } }, "把安装目录设为这里")
             : null,
           p.installed ? h(Btn, { kind: "qbw-btn2", disabled: busyId === p.id, onClick: () => act(p.id, "remove") }, "卸载") : null,
+          !p.installed ? h(Btn, { kind: "qbw-btn2", onClick: async () => {
+            try {
+              const r = await api("/voice/packs/clean", { method: "POST", body: { id: p.id } });
+              const mb = ((r.freedBytes || 0) / 1024 / 1024).toFixed(1);
+              toast(`✓ 已清理未完成的下载（${mb} MB）`);
+              await load();
+            } catch (e) { toast(`✗ ${e.message}`); }
+          } }, "清理下载残留") : null,
           msg[p.id] ? h("span", { style: { fontSize: "12px", opacity: 0.8 } }, msg[p.id]) : null));
 
       const cloud = packs.find((p) => p.id === "voice-cloud");

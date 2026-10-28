@@ -6491,6 +6491,11 @@ async function main() {
               sendJson(await vp.start(String(body.id || '')));
               return;
             }
+            if (req.method === 'POST' && url.pathname === '/api/voice/packs/clean') {
+              const body = await readBody();
+              sendJson(await vp.cleanPartial(String(body.id || '')));
+              return;
+            }
             if (req.method === 'POST' && url.pathname === '/api/voice/packs/stop') {
               const body = await readBody();
               sendJson(await vp.stop(String(body.id || '')));

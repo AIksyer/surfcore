@@ -4,6 +4,23 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.6.15] - 2026-10-28
+
+### 新增
+
+- **清理下载残留**：语音包卡片（未安装时）新增「清理下载残留」，删除
+  `models/.download/` 与所有 `*.part` / `*.pNN`，显示释放了多少 MB。
+- **vendor 拆成 4 卷**：1.84GB 的 `voice-local-vendor.tar.gz` 拆成 4 × 约 460MB，
+  `models.json` 用 `parts` 声明；`fetch-models.mjs` 逐卷下载（每卷独立续传）→ 顺序合并 →
+  整体 sha256 校验 → 解压 → 清理分卷。断网只补一卷，不用重下 1.84GB。
+  （分卷与脚本已在 `surfvoicelocal` / `surfvoicecloud` 仓库推送）
+
+### 验证
+
+- 分卷合并实测：2.4MB 包拆两卷 → 「分卷合并完成」→ sha256 通过 → 解压成功；
+- 远端分卷可访问（HTTP 200，482,344,960 字节/卷）；
+- `npm run test:audit` 77/77。
+
 ## [0.6.14] - 2026-10-28
 
 ### 新增

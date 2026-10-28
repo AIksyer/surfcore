@@ -484,6 +484,31 @@ async function install(id, { force = false } = {}) {
     return { ok: false, error: '启动超时（60 秒内端口没起来）', port: m.port };
   }
 
+  /** 清理未完成的下载（.part / .pNN / models/.download），返回释放的字节数。 */
+  async function cleanPartial(id) {
+    const m = manifests(cfg).find((x) => x.id === id);
+    if (!m) throw new Error(`未知语音包：${id}`);
+    const dir = packDir(cfg, id);
+    let freed = 0;
+    const rm = async (target) => {
+      try {
+        const st = await fsp.stat(target);
+        const size = st.isDirectory() ? 0 : st.size;
+        await fsp.rm(target, { recursive: true, force: true });
+        freed += size;
+      } catch {}
+    };
+    await rm(path.join(dir, 'models', '.download'));
+    // 残留分卷：xxx.part、xxx.p01、xxx.p02…
+    try {
+      for (const name of await fsp.readdir(dir, { recursive: true })) {
+        const base = path.basename(String(name));
+        if (/\.part$|\.[pP]\d{1,3}$/.test(base)) await rm(path.join(dir, String(name)));
+      }
+    } catch {}
+    return { ok: true, freedBytes: freed };
+  }
+
   async function stop(id) {
     const m = manifests(cfg).find((x) => x.id === id);
     if (!m) throw new Error(`未知语音包：${id}`);
@@ -674,5 +699,5 @@ async function install(id, { force = false } = {}) {
     return { ok: true, ms: Date.now() - t0, bytes: buf.length, seconds: +(buf.length / 2 / 24000).toFixed(2) };
   }
 
-  return { list, install, remove, start, stop, activate, cloudConfig, readCloudConfig, cloudStats, test, sampleFile, setEnabled, manifests, packsDir };
+  return { list, install, remove, start, stop, activate, cleanPartial, cloudConfig, readCloudConfig, cloudStats, test, sampleFile, setEnabled, manifests, packsDir };
 }
