@@ -1,0 +1,140 @@
+#!/usr/bin/env node
+/**
+ * 独立更新执行器：等 DSH 宿主退出后，再把新文件覆盖到目标目录。
+ *
+ * 为什么必须独立进程：SurfCore 插件跑在 DSH 宿主进程里，而"目标目录"就是宿主正在
+ * 加载的模块目录（~/.dsh/plugins/surfcore → junction → 仓库根）。在进程内 cpSync 覆盖
+ * 正在使用的模块，会让宿主直接终止（0xFFFF7003，无异常栈），更新也不会落地。
+ * 所以下载/解压都在进程内做（安全），**覆盖动作交给这个脚本，在宿主退出后执行**。
+ *
+ * 用法（由 updates.js 生成参数）：
+ *   node scripts/apply-update.mjs --pending ~/.dsh/surfcore/updates-pending.json
+ *
+ * pending.json:
+ *   {
+ *     "kind": "zip" | "git",
+ *     "target": "D:/surfcore",
+ *     "staging": "~/.dsh/surfcore/staging/surfcore-1729...",   // zip 用
+ *     "branch": "main",                                        // git 用
+ *     "component": "surfcore",
+ *     "to": "0.6.11",
+ *     "waitPid": 12345,
+ *     "createdAt": "2026-10-28T..."
+ *   }
+ */
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+
+const args = process.argv.slice(2);
+const valueOf = (name, fallback = '') => {
+  const i = args.indexOf(`--${name}`);
+  return i >= 0 && args[i + 1] ? args[i + 1] : fallback;
+};
+
+const pendingFile = path.resolve(valueOf('pending'));
+if (!fs.existsSync(pendingFile)) {
+  console.error(`[apply-update] 找不到 pending 文件：${pendingFile}`);
+  process.exit(2);
+}
+
+const pending = JSON.parse(fs.readFileSync(pendingFile, 'utf8'));
+const logFile = pending.logFile || path.join(path.dirname(pendingFile), 'apply-update.log');
+const log = (msg) => {
+  const line = `[${new Date().toISOString()}] ${msg}\n`;
+  try { fs.appendFileSync(logFile, line); } catch {}
+  console.log(line.trim());
+};
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function alive(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitExit(pid, timeoutMs = 15 * 60_000) {
+  if (!pid) return true;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (!alive(pid)) return true;
+    await sleep(800);
+  }
+  return false;
+}
+
+function copyZip(staging, target) {
+  // robocopy 比 cpSync 可靠：能处理大量文件、失败会返回码。
+  // /MIR 会删掉"源里没有"的文件（修掉旧版残留混杂），但必须排除运行数据 &
+  // 用户配置，否则会把 state、config.json、node_modules 一起删掉。
+  const exDirs = ['state', 'backups', 'node_modules', '.git', 'logs', 'staging', 'pet', 'characters', 'voice-packs', 'tmp-update*'];
+  const exFiles = ['config.json', 'bili.config.json', 'updates-pending.json'];
+  const argv = [
+    staging, target,
+    '/MIR',
+    '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/R:2', '/W:1',
+    '/XD', ...exDirs,
+    '/XF', ...exFiles,
+  ];
+  try {
+    execFileSync('robocopy', argv, { windowsHide: true, stdio: 'pipe', timeout: 10 * 60_000 });
+    return { ok: true };
+  } catch (error) {
+    // robocopy: 0/1 成功，>=8 失败
+    const code = Number(error?.status ?? -1);
+    if (code >= 0 && code < 8) return { ok: true, code };
+    const detail = `${error?.stdout || ''}${error?.stderr || ''}`.trim().slice(-500);
+    return { ok: false, error: `robocopy 失败（exit ${code}）：${detail}` };
+  }
+}
+
+function gitPull(target, branch) {
+  try {
+    execFileSync('git', ['-C', target, 'fetch', '--prune', 'origin'], { windowsHide: true, stdio: 'pipe', timeout: 120_000 });
+    execFileSync('git', ['-C', target, 'merge', '--ff-only', `origin/${branch || 'main'}`], { windowsHide: true, stdio: 'pipe', timeout: 120_000 });
+    return { ok: true };
+  } catch (error) {
+    const detail = `${error?.stdout || ''}${error?.stderr || ''}`.trim().slice(-500);
+    return { ok: false, error: `git 更新失败：${detail || String(error?.message ?? error)}` };
+  }
+}
+
+try {
+  log(`[apply-update] 等待 DSH 退出（pid=${pending.waitPid ?? '?'}）…`);
+  const exited = await waitExit(pending.waitPid);
+  if (!exited) {
+    log('[apply-update] 等超时（15 分钟宿主还没退出），放弃本次更新；可手动重试');
+    process.exit(3);
+  }
+  log(`[apply-update] 宿主已退出，开始应用 ${pending.kind} → ${pending.target}`);
+
+  const result = pending.kind === 'git'
+    ? gitPull(pending.target, pending.branch)
+    : copyZip(pending.staging, pending.target);
+
+  if (!result.ok) {
+    log(`[apply-update] 失败：${result.error}`);
+    fs.writeFileSync(`${pendingFile}.failed`, JSON.stringify({ ...pending, error: result.error, at: new Date().toISOString() }, null, 2));
+    process.exit(4);
+  }
+
+  log(`[apply-update] 完成：${pending.component} → v${pending.to ?? '?'}`);
+  try { fs.rmSync(pending.staging, { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(pendingFile, { force: true }); } catch {}
+  try {
+    const doneDir = path.join(path.dirname(pendingFile), 'updates-applied');
+    fs.mkdirSync(doneDir, { recursive: true });
+    fs.writeFileSync(path.join(doneDir, `${Date.now()}-${pending.component}.json`),
+      JSON.stringify({ component: pending.component, to: pending.to, at: new Date().toISOString() }, null, 2));
+  } catch {}
+  process.exit(0);
+} catch (error) {
+  log(`[apply-update] 异常：${String(error?.message ?? error)}`);
+  process.exit(5);
+}

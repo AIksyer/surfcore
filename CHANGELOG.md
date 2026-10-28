@@ -4,6 +4,26 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.6.12] - 2026-10-28
+
+### 修复
+
+- **更新会直接把 DSH 宿主搞崩（0xFFFF7003）**：更新器在宿主进程里 `cpSync` 覆盖插件自己的
+  安装目录，而那正是宿主正在 require 的模块目录。现在改成**进程内只下载/解压，
+  覆盖交给独立进程 `scripts/apply-update.mjs`**：它先等宿主 PID 退出（≤15 分钟），
+  再用 `robocopy /MIR` 覆盖，并排除 `state/backups/node_modules/.git/config.json/...`。
+  git 安装同样排队（退出后 `fetch + merge --ff-only`）。UI 提示改为
+  「已下载，退出并重新打开 DSH 后自动应用」。
+- **覆盖不删旧文件**：`/MIR` 会把「新版本里没有的旧文件」删掉，不再留多版本混杂。
+- **`qq-tool-restrict` 启动刷屏**：以前每个不存在的工具名打一行（几百行），
+  现在只打一条示例 + 一条汇总（执行期白名单不受影响）。
+
+### 验证
+
+- `scripts/apply-update.mjs` 集成测试：staging 覆盖成功、`config.json`/`state/` 保留、
+  源里没有的旧文件被删除；
+- `npm run test:audit` 77/77。
+
 ## [0.6.11] - 2026-10-28
 
 ### 修复

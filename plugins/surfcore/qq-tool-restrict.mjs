@@ -184,13 +184,23 @@ export function apply(ctx) {
   // 是**各 preset 行自己注册的 scoped 工具**，在 QQ preset 里根本没挂载，
   // 因此本名单主要防的是"别的 composition 把它们注册进全局层"这种回归，
   // 以及 MCP 之外的宿主工具（plugin-guard / cordis 检查工具等）。
+  // 名字不存在时跳过（执行期白名单仍然兜底），但**只汇总一行**：
+  // 以前每个工具打一行，DSH 启动时刷几百行日志，把真实告警淹没（2026-10-28 用户反馈）。
+  const skipped = []
   for (const name of KNOWN_DANGEROUS_GLOBAL_TOOLS) {
     try {
       ctx.tools.restrict({ deny: [name] })
     } catch (error) {
-      // 名字不存在时跳过；执行期白名单仍然兜底。
-      console.error(`[qq-tool-restrict] skip restrict ${name}: ${error?.message ?? error}`)
+      skipped.push(name)
+      if (skipped.length === 1) {
+        // 只在第一次失败时记一条细节，便于排查"某个名字失效"
+        console.error(`[qq-tool-restrict] restrict 跳过（示例）：${name} — ${error?.message ?? error}`)
+      }
     }
+  }
+  if (skipped.length) {
+    const list = skipped.length > 8 ? `${skipped.slice(0, 8).join(', ')} 等` : skipped.join(', ')
+    console.error(`[qq-tool-restrict] 跳过 ${skipped.length}/${KNOWN_DANGEROUS_GLOBAL_TOOLS.length} 个当前版本不存在的工具名：${list}（执行期白名单仍生效）`)
   }
 
   // 2) 执行期白名单：任何不在允许范围内的工具调用都会被拒绝。

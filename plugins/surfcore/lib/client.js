@@ -1170,7 +1170,11 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
         try {
           const r = await api("/updates", { method: "POST", body: { action: "apply", ids } });
           const failed = (r.results ?? []).filter((x) => !x.ok);
-          if (r.ok) toast(`✓ 已更新 ${r.updated} 个组件${r.restartRequired ? "，请重启对应服务" : ""}`);
+          const staged = (r.results ?? []).filter((x) => x.ok && x.staged);
+          if (r.ok && staged.length) {
+            // 延后应用：文件已下载到 staging，宿主退出后才覆盖（避免覆盖正在使用的模块导致崩溃）
+            toast(`✓ 已下载 ${staged.length} 个组件；退出并重新打开 DSH 后自动完成更新`);
+          } else if (r.ok) toast(`✓ 已更新 ${r.updated} 个组件${r.restartRequired ? "，请重启对应服务" : ""}`);
           else toast(`✗ ${failed[0]?.error ?? "更新失败"}`);
           onDone?.(r);
         } catch (e) { toast(`✗ 更新失败：${e.message}`); }
@@ -2778,7 +2782,7 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
             : action === "compact" ? `✓ 已压缩（降级 ${r.steps ?? 0} 档）`
               : action === "merge-memories" ? `✓ 已合并 ${r.merged ?? 0} 条为一个事件`
                 : action === "set-first-meet" ? `✓ 已设为初次相遇（${r.merged ?? 1} 条）`
-                  : "✓ 已更新");
+                  : (item.staged ? "✓ 已下载，退出 DSH 后自动应用" : "✓ 已更新"));
           await reload();
           onChanged?.();
         } catch (e) { toast(`✗ ${e.message}`); } finally { setBusy(""); }

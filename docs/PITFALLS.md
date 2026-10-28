@@ -2523,3 +2523,21 @@ return list[0] ?? pool[0];
 - **修法**（0.6.5）：开发目录不存在时改用 `https://github.com/<repo>/archive/refs/heads/main.zip`，
   解压后拍平 `<repo>-main/`，再跑包内 `scripts/fetch-models.mjs` 拉模型（sha256 校验）。
 - **验证**：干净机器上装云端包应依次看到 下载中 → 解压中 → 拉取模型 → 完成，端口 8767 起来。
+
+## 在宿主进程里覆盖自己的安装目录 = 宿主硬崩（0xFFFF7003）
+
+- **现象**：设置页点「更新」→ 下载 main.zip → 覆盖文件那一秒 DSH 宿主直接消失，
+  无 JS 堆栈，退出码 `0xFFFF7003`，`crashpad ... not connected`；
+  更新也没生效（plugin.log 停在「下载 …」）。
+- **根因**：插件跑在 DSH 宿主进程里，而安装目录（junction → 仓库根）正是宿主**正在 require**
+  的模块目录。`fs.cpSync(src, dir, {force:true})` 原地覆盖正在使用的文件 → 进程被终止，
+  `finally` 都执行不到；顺带 `/MIR` 缺失还会留下旧版本残留文件。
+- **修法**（2026-10-28）：
+  1. 下载/解压仍在进程内（安全），但**覆盖动作交给独立进程** `scripts/apply-update.mjs`；
+  2. 该进程 `--pending` 读 `updates-pending.json`，先等宿主 PID 退出（最长 15 分钟），
+     再 `robocopy /MIR`（排除 `state backups node_modules .git logs staging pet characters voice-packs`
+     与 `config.json bili.config.json`）；
+  3. git 安装同样排队（退出后 `fetch + merge --ff-only`），不在运行中 merge；
+  4. UI 明确提示「已下载，退出 DSH 后自动应用」。
+- **验证**：`scripts/apply-update.mjs` 集成测试——staging 新文件覆盖成功、`config.json`/`state/` 保留、
+  源里没有的旧文件被 `/MIR` 删除。
