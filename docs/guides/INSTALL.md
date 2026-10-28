@@ -63,6 +63,9 @@ SnowLuma 是第三方的 QQ 运行时，**本项目不打包、不代装**（EUL
 
 > 端口被占用时 SnowLuma 会自动换端口，**以它界面上显示的为准**。
 
+> 注入失败（`connect ETIMEDOUT \.\pipe\mojo.…`）、检测不到、控制台连不上、
+> 「有正在进行的任务不让关」等，见 [SnowLuma 排错](SNOWLUMA_TROUBLESHOOT.md)。
+
 ---
 
 ## 2. 拿到 SurfCore
