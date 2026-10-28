@@ -4,6 +4,19 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.6.21] - 2026-10-28
+
+### 修复
+
+- **语音包装依赖卡在 99%、没法取消**：依赖阶段本来就没有百分比，界面只显示"安装 Python 依赖 99%"
+  和一条滚动条，用户等 50 分钟也不知道是在装还是卡了。现在：
+  - 进度条显示 **已 X 分钟 + 最近在装什么**（解析 `[bootstrap]` 输出与 pip 行）；
+  - 新增 **「取消安装」**（`/api/voice/packs/cancel`，杀子进程树，保留已下载内容）；
+  - pip **默认走清华源**（`SURFCORE_PIP_INDEX` 可覆盖，失败回退阿里/官方），并加 `--progress-bar off --timeout 30 --retries 5`；
+  - 前端超时文案从"没完成（可重试）"改成"还在安装，卡住可取消"。
+
+> 调查记录：[语音包卡在依赖安装](docs/cases/2026-10-28-voice-install-stuck-deps.md)
+
 ## [0.6.20] - 2026-10-28
 
 ### 修复

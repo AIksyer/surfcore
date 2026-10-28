@@ -3240,7 +3240,12 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           await api("/voice/packs/" + action, { method: "POST", body: { id, ...(action === "install" ? { mirror } : {}), ...(body || {}) } });
           if (action === "install") {
             const done = await poll(id);
-            setMsg((m) => ({ ...m, [id]: done === "ok" ? "✓ 安装完成" : done === "failed" ? "✗ 安装失败：见上方进度条下方的原因" : "⚠️ 安装还没完成（可重试）" }));
+            setMsg((m) => ({
+              ...m,
+              [id]: done === "ok" ? "✓ 安装完成"
+                : done === "failed" ? "✗ 安装失败：见上方进度条下方的原因"
+                  : "⏳ 还在安装（依赖阶段可能要几十分钟）；卡住可以点「取消安装」再来",
+            }));
           }
           else setMsg((m) => ({ ...m, [id]: "" }));
           await load();
@@ -3275,13 +3280,30 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
         p.about && p.about.billing ? h("div", { style: { fontSize: "12px", marginTop: "6px", opacity: 0.75 } },
           p.about.billing, h("br"), p.about.disclaimer || "") : null,
         (p.install || busyId === p.id)
-          ? h(ProgressBar, {
-            pct: p.install?.progress ?? 0,
-            phase: p.install?.phase || "正在启动安装…",
-            err: p.install?.error,
-            // 还没拿到后端进度时先给不确定态，至少让用户看到"在动"
-            indeterminate: !p.install || (/依赖|模型/.test(String(p.install.phase || '')) && Number(p.install.progress || 0) >= 99),
-          })
+          ? h("div", null,
+            h(ProgressBar, {
+              pct: p.install?.progress ?? 0,
+              // 依赖阶段没有百分比：显示"已 X 分钟 + 最近在装什么"，否则用户不知道卡没卡
+              phase: (() => {
+                if (!p.install) return "正在启动安装…";
+                const mins = Math.max(0, Math.round((Date.now() - Number(p.install.startedAt || Date.now())) / 60000));
+                const tail = String(p.install.logTail || "").split(String.fromCharCode(10)).filter(Boolean).pop() || "";
+                const phase = String(p.install.phase || "安装中");
+                return `${phase} · 已 ${mins} 分钟${tail ? ` · ${tail.slice(-60)}` : ""}`;
+              })(),
+              err: p.install?.error,
+              indeterminate: !p.install || (/依赖|模型/.test(String(p.install.phase || '')) && Number(p.install.progress || 0) >= 99),
+            }),
+            p.install && p.install.phase !== "完成" && p.install.phase !== "失败"
+              ? h("div", { style: { marginTop: "6px" } },
+                h(Btn, { kind: "qbw-btn2", onClick: async () => {
+                  try {
+                    await api("/voice/packs/cancel", { method: "POST", body: { id: p.id } });
+                    if (toast) toast("已取消安装（已下载的模型会保留）");
+                    await load();
+                  } catch (e) { if (toast) toast(`✗ ${e.message}`); }
+                } }, "取消安装"))
+              : null)
           : null,
         p.installed && p.dir ? h("div", { style: { fontSize: "12px", marginTop: "4px", opacity: 0.7 } }, "路径：", h("code", null, p.dir)) : null,
         p.enginePort && p.running && p.engineUp === false

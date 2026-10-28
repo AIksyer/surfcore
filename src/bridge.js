@@ -6512,6 +6512,11 @@ async function main() {
               sendJson(await vp.start(String(body.id || '')));
               return;
             }
+            if (req.method === 'POST' && url.pathname === '/api/voice/packs/cancel') {
+              const body = await readBody();
+              sendJson(await vp.cancelInstall(String(body.id || '')));
+              return;
+            }
             if (req.method === 'POST' && url.pathname === '/api/voice/packs/clean') {
               const body = await readBody();
               sendJson(await vp.cleanPartial(String(body.id || '')));

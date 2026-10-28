@@ -286,7 +286,12 @@ export function createVoicePacks(cfg) {
       running,
       external,
       dir: hasFiles ? dir : null,
-      install: activeInstalls.get(m.id) || null,
+      install: (() => {
+        const rec = activeInstalls.get(m.id);
+        if (!rec) return null;
+        const { child, ...rest } = rec;
+        return { ...rest, logTail: String(rec.log || '').slice(-160) };
+      })(),
     };
   }
 
@@ -344,7 +349,7 @@ async function install(id, { force = false, mirror = '', jobs = 0 } = {}) {
     const dir = packDir(cfg, id);
     if (!force && (await exists(path.join(dir, 'config.toml')))) throw new Error('已经安装过了');
 
-    const rec = { progress: 0, phase: '准备中', startedAt: Date.now(), error: null, log: '' };
+    const rec = { progress: 0, phase: '准备中', startedAt: Date.now(), error: null, log: '', lastOutputAt: Date.now(), child: null, cancelled: false };
     activeInstalls.set(id, rec);
     // 异步跑，接口立刻返回，前端轮询 status 看进度
     (async () => {
@@ -397,11 +402,19 @@ async function install(id, { force = false, mirror = '', jobs = 0 } = {}) {
             const child = spawn(process.execPath, [path.join(dir, script)], {
               cwd: dir, windowsHide: true, env,
             });
+            rec.child = child;
             let out = '';
             const timer = setTimeout(() => { try { child.kill(); } catch {} resolve(false); }, 45 * 60_000);
             const onChunk = (d) => {
               const text = String(d);
               out = (out + text).slice(-4000); rec.log = out;
+              rec.lastOutputAt = Date.now();
+              // [bootstrap] ... 行直接当阶段名：用户能看到"现在在装 voxd 依赖 / 装 GPT-SoVITS 依赖"
+              const bi = text.lastIndexOf('[bootstrap]');
+              if (bi >= 0) {
+                const bootLine = text.slice(bi + 11).split(String.fromCharCode(10))[0].trim();
+                if (bootLine) rec.phase = bootLine.slice(0, 60);
+              }
               const m2 = /(\d{1,3})\s*%/.exec(text);
               if (m2) {
                 const pct = Math.min(100, Math.max(0, Number(m2[1])));
@@ -550,6 +563,25 @@ async function install(id, { force = false, mirror = '', jobs = 0 } = {}) {
       ok: false, port: m.port,
       error: `启动超时（60 秒内端口没起来）${startLog ? `；脚本输出：${startLog.slice(-300)}` : ''}`,
     };
+  }
+
+  /** 取消正在进行的安装：杀子进程树，标记失败。 */
+  async function cancelInstall(id) {
+    const rec = activeInstalls.get(id);
+    if (!rec) return { ok: false, error: '这个包没有正在进行的安装' };
+    rec.cancelled = true;
+    try {
+      if (rec.child?.pid) {
+        await new Promise((resolve) => {
+          const k = spawn('taskkill', ['/PID', String(rec.child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+          k.on('exit', resolve); k.on('error', resolve);
+        });
+      }
+    } catch {}
+    rec.phase = '失败';
+    rec.error = '已取消安装（可以重新点安装；已下载的模型/分卷会保留）';
+    setTimeout(() => activeInstalls.delete(id), 10 * 60_000).unref?.();
+    return { ok: true };
   }
 
   /** 清理未完成的下载（.part / .pNN / models/.download），返回释放的字节数。 */
@@ -778,5 +810,5 @@ async function install(id, { force = false, mirror = '', jobs = 0 } = {}) {
     return { ok: true, ms: Date.now() - t0, bytes: buf.length, seconds: +(buf.length / 2 / 24000).toFixed(2) };
   }
 
-  return { list, install, remove, start, stop, activate, cleanPartial, cloudConfig, readCloudConfig, cloudStats, test, sampleFile, setEnabled, manifests, packsDir };
+  return { list, install, remove, start, stop, activate, cleanPartial, cancelInstall, cloudConfig, readCloudConfig, cloudStats, test, sampleFile, setEnabled, manifests, packsDir };
 }
