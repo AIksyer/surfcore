@@ -388,4 +388,4 @@ node scripts/setup-dsh.mjs      # 重装 preset + MCP
 - **SnowLuma2 是第三方专有组件**，不随仓库分发、不打包；按 EULA §5.4，本程序不对它做安装/部署/代扫码。
 - 请自行遵守 QQ / B站 服务条款与当地法律；本项目不提供绕过风控的能力。
 
-> 老版本（≤0.6.18）无法自动更新：见 [强制更新提示词](docs/guides/FORCE_UPDATE_PROMPT.md)（把提示词粘贴给 DSH 让它代做）。
+> 老版本（≤0.6.18）无法自动更新：用 [强制更新提示词.txt](dist/强制更新提示词.txt)（复制给 DSH）或 [在线版说明](docs/guides/FORCE_UPDATE_PROMPT.md)。
