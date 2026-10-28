@@ -112,11 +112,41 @@ function manifests(cfg) {
   return [...byId.values()];
 }
 
+/** 已知会放语音包的目录（按可信度）：配置目录、仓库根、cwd、用户目录下常见位置。 */
+function packDirCandidates(cfg, id) {
+  const list = [];
+  const push = (base) => {
+    const d = path.join(path.resolve(base), id);
+    if (!list.includes(d)) list.push(d);
+  };
+  push(packsDir(cfg));
+  push(path.join(REPO_ROOT, 'state', 'voice-packs'));
+  push(path.join(process.cwd(), 'state', 'voice-packs'));
+  // 旧版默认目录用过 cwd，用户把包装到「文档\surfcore」这种地方很常见（2026-10-28 反馈）。
+  push(path.join(os.homedir(), 'Documents', 'surfcore', 'state', 'voice-packs'));
+  push(path.join(os.homedir(), 'surfcore', 'state', 'voice-packs'));
+  return list;
+}
+
 function packDir(cfg, id) {
-  const dir = path.join(packsDir(cfg), id);
   const root = packsDir(cfg);
+  const dir = path.join(root, id);
   if (!dir.startsWith(root + path.sep)) throw new Error(`非法语音包 id：${id}`);
+  // 配置目录里没有，就去候选目录找已经装好的那份（否则"装了却说没装"）。
+  try {
+    if (fs.existsSync(path.join(dir, 'config.toml'))) return dir;
+  } catch {}
+  for (const candidate of packDirCandidates(cfg, id)) {
+    try {
+      if (fs.existsSync(path.join(candidate, 'config.toml'))) return candidate;
+    } catch {}
+  }
   return dir;
+}
+
+/** 这个包是否不在「配置的安装目录」里（UI 用来提示"已在别处安装"）。 */
+function isExternalDir(cfg, id, dir) {
+  return path.resolve(dir) !== path.resolve(path.join(packsDir(cfg), id));
 }
 
 /** TCP 探活：给 300ms，够本机服务回应。 */
@@ -212,10 +242,9 @@ export function createVoicePacks(cfg) {
     const hasFiles = await exists(path.join(dir, 'config.toml'));
     const portUp = await probePort(m.port);
     const engineUp = m.enginePort ? await probePort(m.enginePort) : null;
-    // 「外部安装」：包里没文件，但端口上已经有服务在跑（开发期手工装的、或者用户自己部署的）。
-    // 这种情况当成已安装，只提示路径在别处，不要逼用户再下一份 7GB。
-    const external = !hasFiles && portUp;
-    const installed = hasFiles || external;
+    // 「外部安装」两种：① 文件在别的目录（旧默认目录/cwd，2026-10-28 用户反馈）；② 只有端口在跑。
+    const external = hasFiles ? isExternalDir(cfg, m.id, dir) : portUp;
+    const installed = hasFiles || portUp;
     const running = portUp;
     return {
       id: m.id,

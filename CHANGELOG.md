@@ -4,6 +4,16 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.6.10] - 2026-10-28
+
+### 修复
+
+- **语音包「装好了却显示未安装」**：用户把包装在 `文档\surfcore\stateoice-packsoice-local`，
+  而配置里是另一个目录、端口又没起来 → 判定为未安装，只给他看「安装（1.9GB）」。
+  现在识别会在多个已知目录里找（配置目录 / 仓库根 / cwd / `文档\surfcore` / `~\surfcore`），
+  找到 `config.toml` 即视为已安装；卡片显示「已在别处安装：<路径>」，并提供
+  「把安装目录设为这里」一键把 `voicePacks.dir` 指过去。启动/停止/卸载都会用找到的那份。
+
 ## [0.6.9] - 2026-10-28
 
 ### 新增

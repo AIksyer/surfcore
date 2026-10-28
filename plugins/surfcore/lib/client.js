@@ -3256,7 +3256,17 @@ window.__ModuleLoader__.load({
           : null,
         h("div", { style: { display: "flex", gap: "8px", marginTop: "8px", flexWrap: "wrap", alignItems: "center" } },
           !p.installed ? h(Btn, { disabled: busyId === p.id, onClick: () => act(p.id, "install") }, "安装（" + fmt(p.sizeBytes) + "）") : null,
-          p.external ? h("span", { style: { fontSize: "12px", opacity: 0.7 } }, "已在别处安装") : null,
+          p.external ? h("span", { style: { fontSize: "12px", opacity: 0.7 } }, p.dir ? `已在别处安装：${p.dir}` : "已在别处安装（端口在跑）") : null,
+          p.external && p.dir
+            ? h(Btn, { kind: "qbw-btn2", onClick: async () => {
+              const parent = String(p.dir).replace(/[\/][^\/]+$/, "");
+              try {
+                await api("/config", { method: "POST", body: { qq: { voicePacks: { dir: parent.split("\\").join("/") } } } });
+                if (toast) toast(`✓ 安装目录已指向 ${parent}`);
+                await load();
+              } catch (e) { if (toast) toast(`✗ ${e.message}`); }
+            } }, "把安装目录设为这里")
+            : null,
           p.installed ? h(Btn, { kind: "qbw-btn2", disabled: busyId === p.id, onClick: () => act(p.id, "remove") }, "卸载") : null,
           msg[p.id] ? h("span", { style: { fontSize: "12px", opacity: 0.8 } }, msg[p.id]) : null));
 
