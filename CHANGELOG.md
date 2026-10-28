@@ -24,12 +24,15 @@
   源里没有的旧文件被删除；
 - `npm run test:audit` 77/77。
 
+> 调查记录：[更新致 DSH 崩溃](docs/cases/2026-10-28-update-crash.md)
+
+
 ## [0.6.11] - 2026-10-28
 
 ### 修复
 
 - **SnowLuma「装好了但检测不到」**：用户填 `D:\Tools\SnowLuma2` 时，代码只取 `dirname` → 算成 `D:\Tools`，
-  而配置在 `SnowLuma2pp\config` 下，于是永远检测不到。现在候选目录展开为
+  而配置在 `SnowLuma2` 下的 `app/config` 里，于是永远检测不到。现在候选目录展开为
   `填写路径 / 填写路径pp / 上一级 / 上一级pp`；`SnowLuma home（app 目录）` 也加了「浏览…」和更清楚的说明。
 
 ### 新增
@@ -38,6 +41,9 @@
   保存后按多候选目录识别；这是"自动识别不到"时最稳的兜底。
 - **所有路径类字段都配了「浏览…」**：会话工作目录、bili.mjs 路径、语音库目录、ffmpeg 路径、
   SnowLuma 安装目录 / home、语音安装目录 / 已有包目录、桌宠安装目录 / Electron / 安装包 zip。
+
+> 调查记录：[SnowLuma 检测](docs/cases/2026-10-28-snowluma-detect.md)
+
 
 ## [0.6.10] - 2026-10-28
 
@@ -48,6 +54,9 @@
   现在识别会在多个已知目录里找（配置目录 / 仓库根 / cwd / `文档\surfcore` / `~\surfcore`），
   找到 `config.toml` 即视为已安装；卡片显示「已在别处安装：<路径>」，并提供
   「把安装目录设为这里」一键把 `voicePacks.dir` 指过去。启动/停止/卸载都会用找到的那份。
+
+> 调查记录：[语音包未识别](docs/cases/2026-10-28-voice-pack-not-detected.md)
+
 
 ## [0.6.9] - 2026-10-28
 
@@ -68,6 +77,9 @@
   零样本克隆所需的参考音频齐了，默认音色开箱可用。
 - **安装后没有 config.toml**：仓库只有 `config.example.toml`（真实配置不入库），安装后 voxd 起不来。
   现在装完自动从 `config.example.toml` 复制一份 `config.toml`。
+
+> 调查记录：[默认音色 503](docs/cases/2026-10-28-voice-default-voice-missing.md)
+
 
 ## [0.6.7] - 2026-10-27
 

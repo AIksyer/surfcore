@@ -9,6 +9,7 @@
 | 2026-10-28 | [更新导致 DSH 硬崩](2026-10-28-update-crash.md) | 进程内覆盖自己的安装目录 → 宿主被终止（0xFFFF7003） | v0.6.12 |
 | 2026-10-28 | [语音包「装了却说没装」](2026-10-28-voice-pack-not-detected.md) | 包在别的目录（旧 cwd 默认）→ 只认一个目录 | v0.6.10 |
 | 2026-10-28 | [本地语音包默认音色 503](2026-10-28-voice-default-voice-missing.md) | `voices/`、`voicepack/` 被 .gitignore 排除，没随包分发 | v0.6.8 |
+| 2026-10-28 | [SnowLuma 一直检测不到](2026-10-28-snowluma-detect.md) | 填根目录时取了 dirname，候选全错 | v0.6.11 |
 | 2026-10-27 | [桌宠 125% 缩放拖动漂移](2026-10-27-pet-drag-drift.md) | `setPosition` 在缩放屏上让窗口每帧变大 | 桌宠 v0.2.3 |
 | 2026-10-27 | [桌宠拖拽永不结束](2026-10-27-pet-drag-never-ends.md) | 指针离开窗口后收不到 `pointerup` | 桌宠 v0.2.1 |
 
