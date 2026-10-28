@@ -4,6 +4,17 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.6.8] - 2026-10-28
+
+### 修复
+
+- **本地语音包默认音色不存在**：仓库里没有 `voices/` 和 `voicepack/`，而 `config.toml` 默认
+  `default = "loli12-gsv"` → 一调 TTS 就 503「没有音色」。现在 `voice-local-voicepack.tar.gz`
+  （2.5MB：`voices/*` + `voicepack/age12/*.wav`）作为 Release 资产随 `models.json` 一起下载，
+  零样本克隆所需的参考音频齐了，默认音色开箱可用。
+- **安装后没有 config.toml**：仓库只有 `config.example.toml`（真实配置不入库），安装后 voxd 起不来。
+  现在装完自动从 `config.example.toml` 复制一份 `config.toml`。
+
 ## [0.6.7] - 2026-10-27
 
 ### 新增

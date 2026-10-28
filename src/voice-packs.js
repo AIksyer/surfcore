@@ -283,6 +283,12 @@ export function createVoicePacks(cfg) {
           rec.phase = phase;
         });
         await flattenSingleDir(dir);
+        // 仓库里只有 config.example.toml（真实配置不入库）：装完先复制成 config.toml，
+        // 否则 voxd 起不来、用户看到"包里没有 config.toml"。
+        if (!(await exists(path.join(dir, 'config.toml'))) && (await exists(path.join(dir, 'config.example.toml')))) {
+          await fsp.copyFile(path.join(dir, 'config.example.toml'), path.join(dir, 'config.toml'));
+          rec.phase = '生成配置';
+        }
         if (!(await exists(path.join(dir, 'config.toml')))) {
           throw new Error('包里没有 config.toml，可能下载的是错的文件');
         }
