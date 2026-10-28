@@ -2370,6 +2370,15 @@
 
 ---
 
+## 修 bug 记录规矩（2026-10-28 用户明确要求，优先级最高）
+
+**修完任何一个 bug，必须写一份 `docs/cases/YYYY-MM-DD-<slug>.md`，并在 `docs/cases/README.md` 的表格里登记一行。**
+
+- 模板：`docs/cases/_TEMPLATE.md`（现象 / 环境 / 根因 / 修法 / 验证 / 遗留，六段缺一不可）；
+- 只写结论不算记录：至少要有「代码位置」「为什么之前没发现」「怎么验证的」「没验证到什么」；
+- 影响用户的 bug 还要同步一条到 `docs/PITFALLS.md`（按坑记，case 按 bug 记，两者互补）；
+- 已有案例见 `docs/cases/README.md`。
+
 ## 发版规矩（2026-10-28 用户明确要求，优先级最高）
 
 1. **版本号由用户决定**：`node scripts/version.mjs bump` 之后**不要直接发布**，
