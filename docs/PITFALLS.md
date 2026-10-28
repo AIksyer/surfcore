@@ -2562,3 +2562,17 @@ return list[0] ?? pool[0];
 - **修法**（v0.6.17）：单层目录自动拍平；识别源码包并给出可读错误；失败自动清理残留；
   错误移到按钮旁 + 「用官方最新版」「清理残留后重试」；桌宠 zip 也支持下载链路。
 - **验证**：`test-pet-install-guards.mjs`（源码 zip 拍平成功 / 源码包被识别 / 残留被清理）。
+
+## 语音包装完不可用：嵌套目录 / 启不动 / 停不掉
+
+- **现象**：装完是 `voice-local/surfvoicelocal-main/…`，无 config.toml/models；启动转圈 60 秒超时；
+  停止无效；启动弹控制台窗口。
+- **根因**：① `flattenSingleDir` 用 `config.toml` 判定，而仓库只有 `config.example.toml` → 永不拍平；
+  ② `run.bat`/`stop.bat` 里有 `pause`，被隐藏窗口拉起时卡死；③ `stop.bat` 假设
+  `Get-NetTCPConnection` 返回单对象，多对象时报错、不杀进程；④ voxd 用 `python.exe` 起会带控制台；
+  ⑤ `requirements-gsv.txt` 缺 6 个包，`jieba_fast`/`pyopenjtalk` 在 Windows 装不上；
+  ⑥ 缺 `logs/gsv/tts_infer.yaml`；⑦ pip 直连 pypi 超时。
+- **修法**（v0.6.18 + 语音包仓库）：拍平改用 package.json/models.json/version.json/config.example.toml；
+  bat 去 pause、改 netstat+taskkill、pythonw；start 收 stderr 且超时 taskkill 进程树；stop 加按端口强杀兜底；
+  requirements 补全并替换 Windows 不友好包；bootstrap 加 pip 镜像回退并生成 tts_infer.yaml。
+- **验证**：`test-voice-flatten.mjs`（4 个场景）+ 全量测试；真机完整链路未验证。

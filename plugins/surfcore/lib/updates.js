@@ -100,6 +100,33 @@ function semverCompare(a, b) {
 
 const latestCache = new Map(); // repo -> { tag, url, at }
 const commitShaCache = new Map(); // repo -> { sha, at }
+const remoteVersionCache = new Map(); // repo -> { version, at }
+
+/** 从 git remote URL 里取 owner/repo（https / ssh 都支持）。 */
+function ownerRepoOf(url) {
+  const m = /github\.com[:/]([^/]+)\/([^/\s]+?)(?:\.git)?$/i.exec(String(url || '').trim());
+  return m ? `${m[1]}/${m[2]}` : '';
+}
+
+/** 读远端 main 的 package.json.version（用于弹窗里显示"更新到 vX"）。失败返回 ''。 */
+async function fetchRemoteVersion(repo) {
+  const cached = remoteVersionCache.get(repo);
+  if (cached && Date.now() - cached.at < 5 * 60_000) return cached.version;
+  try {
+    const res = await fetch(`https://api.github.com/repos/${repo}/contents/package.json?ref=main`, {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'surfcore-updates' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return cached?.version ?? '';
+    const json = await res.json();
+    const text = Buffer.from(String(json?.content ?? ''), 'base64').toString('utf8');
+    const version = String(JSON.parse(text)?.version ?? '');
+    if (version) remoteVersionCache.set(repo, { version, at: Date.now() });
+    return version;
+  } catch {
+    return cached?.version ?? '';
+  }
+}
 
 async function fetchCommitSha(repo) {
   const cached = commitShaCache.get(repo);
@@ -296,7 +323,10 @@ export async function inspectComponent(component, opts = {}) {
   const dir = normalizeDir(component?.dir);
   if (dir) {
     const inside = await runGit(['-C', dir, 'rev-parse', '--is-inside-work-tree']);
-    if (inside.ok && inside.stdout.trim() === 'true') return inspectGitComponent(component, opts);
+    const top = inside.ok ? await runGit(['-C', dir, 'rev-parse', '--show-toplevel']) : { ok: false };
+    const isOwnRepo = inside.ok && inside.stdout.trim() === 'true'
+      && top.ok && path.resolve(top.stdout.trim()).toLowerCase() === path.resolve(dir).toLowerCase();
+    if (isOwnRepo) return inspectGitComponent(component, opts);
   }
   if (component?.versionUrl) return inspectReleaseComponent(component, opts);
   // 没有版本清单、但有版本仓库 → 按「提交级比对」查（语音包就是这种：
@@ -326,6 +356,13 @@ export async function inspectGitComponent(component, { fetch = true } = {}) {
   const inside = await runGit(['-C', dir, 'rev-parse', '--is-inside-work-tree']);
   if (!inside.ok || inside.stdout.trim() !== 'true') {
     return { ...base, available: false, reason: '不是 git 仓库（用 git clone 安装的才能检查更新）' };
+  }
+  // ⚠️ 子目录在某个仓库里时 rev-parse 也会返回 true（语音包在 <repo>/state/voice-packs 下就会命中），
+  // 必须要求“仓库根就是这个目录”，否则会把语音包当成本体仓库、显示同样的提交列表（2026-10-28 反馈）。
+  const top = await runGit(['-C', dir, 'rev-parse', '--show-toplevel']);
+  const topDir = top.ok ? path.resolve(top.stdout.trim()) : '';
+  if (!topDir || topDir.toLowerCase() !== path.resolve(dir).toLowerCase()) {
+    return { ...base, available: false, reason: '目录在别的 git 仓库里（不是它自己的仓库），改用版本/提交比对' };
   }
   const remoteUrl = await runGit(['-C', dir, 'remote', 'get-url', 'origin']);
   if (!remoteUrl.ok) return { ...base, available: false, reason: '没有配置 origin remote' };
@@ -364,8 +401,10 @@ export async function inspectGitComponent(component, { fetch = true } = {}) {
     const log = await runGit(['-C', dir, 'log', '--oneline', '--no-merges', `HEAD..origin/${branch}`]);
     if (log.ok) changelog = log.stdout.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, MAX_CHANGELOG);
   }
+  const remoteVersion = await fetchRemoteVersion(String(component?.versionRepo || '').trim() || ownerRepoOf(remoteUrl.stdout.trim()));
   return {
     ...base, available: true, branch, channel: 'git',
+    latestVersion: remoteVersion || '',
     remoteUrl: remoteUrl.stdout.trim(),
     local: local.ok ? local.stdout.trim() : '',
     remote: remote.stdout.trim(),
@@ -670,6 +709,7 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
   /** 这批结果里"值得提示"的项：有更新，且这次的远端 commit 没被 dismiss 过。 */
   function pendingOf(results) {
     return (results ?? []).filter((item) => item?.available && item.updateAvailable
+      && !item.blocked // 本地有改动/分叉的组件更新不了，别反复弹
       && Boolean(item.installedVersion || item.local)
       && state.dismissed[item.id] !== (item.remote ?? `v${item.latestVersion ?? ''}`));
   }
@@ -880,6 +920,17 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
       }
       // 更新完再体检一次，让界面拿到最新状态
       await check({ fetch: false });
+      // 已排队（staged）的组件：记成"已处理"，重启前不再弹同一个提醒。
+      // 以前不记账 → 用户点了更新、还没重启，下次检查又弹一遍（2026-10-28 反馈）。
+      try {
+        for (const row of results) {
+          if (!row.ok || !row.staged) continue;
+          const report = (state.results ?? []).find((x) => x.id === row.id);
+          const key = report?.remote ?? `v${report?.latestVersion ?? ''}`;
+          if (key) state.dismissed[row.id] = key;
+        }
+        persist();
+      } catch {}
       const changed = results.filter((row) => row.ok && !row.skipped);
       return {
         ok: results.every((row) => row.ok),

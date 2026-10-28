@@ -4,6 +4,31 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.6.18] - 2026-10-28
+
+### 修复
+
+- **语音包装完不可用（一组问题）**：
+  - `flattenSingleDir` 判定看 `config.toml`，而仓库只有 `config.example.toml` → **永远不拍平**，
+    装成 `voice-local/surfvoicelocal-main/…`。改用 `package.json/models.json/version.json/config.example.toml` 任一判定；
+  - `start()`：stdin 给空句柄（脚本里 pause 也不会卡死）、收 stderr、60 秒超时后 `taskkill /T /F` 杀进程树；
+  - `stop()`：`stop.bat` 之后仍占端口 → 按端口强杀兜底；
+  - `remove()`：端口占用 / EBUSY 给人话提示。
+- **更新弹窗反复弹、且认错仓库**：
+  - `rev-parse --is-inside-work-tree` 在子目录也返回 true → 语音包被当成本体仓库、列出同样的提交。
+    现在要求 `show-toplevel` 等于组件目录本身；
+  - staged（已下载待重启）后记为已处理，重启前不再弹；
+  - 「本地有未提交改动」被 blocked 的组件不再计入 pending，避免每次检查都弹；
+  - 弹窗显示目标版本与通道：`SurfCore 本体 v0.6.17 → v0.6.18`、git 仓库 / 提交追踪 / 版本清单。
+
+### 语音包仓库（已推送）
+
+- `run.bat` / `stop.bat` / `gsv.bat`：去 `pause`、`pythonw`、`netstat + taskkill`；
+- `requirements-gsv.txt` 补齐 6 个缺失包，`jieba_fast→jieba`、`pyopenjtalk→pyopenjtalk-prebuilt`；
+- `bootstrap-env.mjs`：pip 失败自动换清华/阿里镜像；自动生成 `logs/gsv/tts_infer.yaml`（device 按 nvidia-smi）。
+
+> 调查记录：[语音包装完不可用](docs/cases/2026-10-28-voice-pack-install-start.md)
+
 ## [0.6.17] - 2026-10-28
 
 ### 修复

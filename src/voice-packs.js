@@ -131,6 +131,20 @@ function packDirCandidates(cfg, id) {
   return list;
 }
 
+
+/** 按端口找监听进程并强杀（stop.bat 失效时的兜底）。 */
+function killListeners(port) {
+  return new Promise((resolve) => {
+    const ps = spawn('powershell', ['-NoProfile', '-Command',
+      `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue; $_ }`],
+    { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    ps.stdout.on('data', (d) => { out += String(d); });
+    ps.on('exit', () => resolve(out.trim().length > 0));
+    ps.on('error', () => resolve(false));
+  });
+}
+
 function packDir(cfg, id) {
   const root = packsDir(cfg);
   const dir = path.join(root, id);
@@ -178,19 +192,27 @@ async function exists(p) {
 
 /** 本地目录直接用；zip 先落到临时文件再用系统 tar 解压（Windows 10+ 自带 bsdtar）。 */
 /** GitHub archive zip 解压后多一层 `<repo>-main/`：把里面的内容提上来。 */
-async function flattenSingleDir(destDir) {
+export async function flattenSingleDir(destDir) {
   let entries = [];
-  try { entries = await fsp.readdir(destDir, { withFileTypes: true }); } catch { return; }
+  try { entries = await fsp.readdir(destDir, { withFileTypes: true }); } catch { return false; }
   const dirs = entries.filter((e) => e.isDirectory());
   const files = entries.filter((e) => !e.isDirectory());
-  if (dirs.length !== 1 || files.length > 0) return;
+  if (dirs.length !== 1 || files.length > 0) return false;
   const inner = path.join(destDir, dirs[0].name);
-  if (await exists(path.join(destDir, 'config.toml'))) return;
-  if (!(await exists(path.join(inner, 'config.toml')))) return;
+  if (await exists(path.join(destDir, 'config.toml'))) return false;
+  // 判定“这层是包根”不能看 config.toml：仓库里只有 config.example.toml（真实配置不入库），
+  // 用 package.json / models.json / version.json / config.example.toml 任一存在即可（2026-10-28 报告 #1）。
+  const markers = ['package.json', 'models.json', 'version.json', 'config.example.toml', 'config.toml'];
+  let isPackRoot = false;
+  for (const m of markers) {
+    if (await exists(path.join(inner, m))) { isPackRoot = true; break; }
+  }
+  if (!isPackRoot) return false;
   for (const name of await fsp.readdir(inner)) {
     await fsp.rename(path.join(inner, name), path.join(destDir, name));
   }
   await fsp.rm(inner, { recursive: true, force: true });
+  return true;
 }
 
 async function fetchToLocal(cfg, id, src, destDir, onProgress = () => {}) {
@@ -442,7 +464,20 @@ async function install(id, { force = false, mirror = '', jobs = 0 } = {}) {
   async function remove(id) {
     const dir = packDir(cfg, id);
     await stop(id).catch(() => {});
-    await fsp.rm(dir, { recursive: true, force: true });
+    // 端口还在 → 说明有进程占着目录，直接删会 EBUSY；给用户明确提示而不是抛原始错误。
+    const m = manifests(cfg).find((x) => x.id === id);
+    if (m && await probePort(m.port)) {
+      return { ok: false, error: '还有进程占着这个包（端口仍在监听）：先点「停止」，或重启 DSH 后再卸载' };
+    }
+    try {
+      await fsp.rm(dir, { recursive: true, force: true });
+    } catch (error) {
+      const msg = String(error?.message ?? error);
+      if (/EBUSY|EPERM|resource busy/i.test(msg)) {
+        return { ok: false, error: '目录被占用（EBUSY）：可能有手动启动的 python/voxd 在跑，结束它再卸载' };
+      }
+      return { ok: false, error: msg };
+    }
     const state = await readState(cfg);
     if (state.packs?.[id]) {
       delete state.packs[id];
@@ -478,12 +513,16 @@ async function install(id, { force = false, mirror = '', jobs = 0 } = {}) {
 
     const script = path.join(dir, m.startScript || 'run.bat');
     if (!(await exists(script))) throw new Error(`包内缺少启动脚本：${m.startScript}`);
+    // stdio 必须给 stdin 一个空句柄：脚本里若还有 pause，'ignore' 会让它卡死不退。
+    // stderr 收进 rec.log，超时后杀进程树，避免留下僵尸。
     const child = spawn('cmd', ['/c', script], {
       cwd: dir,
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', 'ignore', 'pipe'],
       windowsHide: true,
     });
+    let startLog = '';
+    child.stderr?.on('data', (d) => { startLog = (startLog + String(d)).slice(-2000); });
     child.unref();
 
     // 最多等 60 秒（本地包要加载模型）
@@ -498,7 +537,19 @@ async function install(id, { force = false, mirror = '', jobs = 0 } = {}) {
         };
       }
     }
-    return { ok: false, error: '启动超时（60 秒内端口没起来）', port: m.port };
+    // 超时：把这次拉起的进程树杀掉（cmd + python 子进程），别留占端口的僵尸。
+    try {
+      if (child.pid) {
+        await new Promise((resolve) => {
+          const k = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+          k.on('exit', resolve); k.on('error', resolve);
+        });
+      }
+    } catch {}
+    return {
+      ok: false, port: m.port,
+      error: `启动超时（60 秒内端口没起来）${startLog ? `；脚本输出：${startLog.slice(-300)}` : ''}`,
+    };
   }
 
   /** 清理未完成的下载（.part / .pNN / models/.download），返回释放的字节数。 */
@@ -542,7 +593,18 @@ async function install(id, { force = false, mirror = '', jobs = 0 } = {}) {
       if (!(await probePort(m.port))) return { ok: true };
       await new Promise((r) => setTimeout(r, 500));
     }
-    return { ok: false, error: '端口还在监听（可能不是这个包占的）' };
+    // 兜底：脚本没杀掉（老版 stop.bat 依赖 Get-NetTCPConnection 单对象假设，常失效）
+    // 就直接按端口找 PID 强杀。只杀监听这个端口的进程，不碰别的。
+    try {
+      const killed = await killListeners(m.port);
+      if (killed) {
+        for (let i = 0; i < 6; i++) {
+          if (!(await probePort(m.port))) return { ok: true, killedByFallback: true };
+          await new Promise((r) => setTimeout(r, 400));
+        }
+      }
+    } catch {}
+    return { ok: false, error: '端口还在监听：可能有别的程序占着，或语音包里的进程需要管理员权限才能结束' };
   }
 
   /** 写云端密钥：只改 config.toml 里那三行，其余原样保留。 */

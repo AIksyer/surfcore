@@ -1190,8 +1190,14 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
       };
       return h("div", { className: "qbw-modal-backdrop", onClick: (e) => { if (e.target === e.currentTarget && !working) onClose?.(); } },
         h("div", { className: "qbw-modal", style: { maxWidth: "600px", maxHeight: "82vh", overflow: "auto" } },
-          h("h3", null, "发现可用更新"),
-          h("p", null, "git 安装做快进（--ff-only）；zip 安装会下载新包覆盖代码。两种都不会动 config.json 与记忆卡。"),
+          h("h3", null, pending.length > 1 ? `发现 ${pending.length} 个可用更新` : "发现可用更新"),
+          h("p", null, (() => {
+            // 让用户一眼看到"这次更新到什么版本"（以前只有提交列表，用户不知道是哪个版本）
+            const withVer = pending.filter((x) => x.latestVersion);
+            if (!withVer.length) return "git 安装做快进（--ff-only）；zip 安装会下载新包覆盖代码。两种都不会动 config.json 与记忆卡。";
+            const parts = withVer.map((x) => `${x.name} v${x.installedVersion || "?"} → v${x.latestVersion}`);
+            return `${parts.join("　")}；更新不会动 config.json 与记忆卡。`;
+          })()),
           pending.length ? pending.map((item) => h("div", { key: item.id, style: { border: "1px solid rgba(127,127,127,.24)", borderRadius: "10px", padding: "10px 12px", margin: "0 0 8px" } },
             h("label", { style: { display: "flex", gap: "8px", alignItems: "center", fontWeight: 600 } },
               h("input", { type: "checkbox", checked: selected.has(item.id), onChange: () => toggle(item.id), disabled: working }),
@@ -1201,10 +1207,13 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
                   ? `v${item.installedVersion} → v${item.latestVersion}`
                   : item.channel === "release"
                     ? `${item.installedVersion ? `v${item.installedVersion}` : "未安装"} → v${item.latestVersion}`
-                    : `${item.behind} 个提交`)),
+                    : (item.latestVersion
+                      ? `v${item.installedVersion || "?"} → v${item.latestVersion}（${item.behind} 个提交）`
+                      : `${item.behind} 个提交（到 ${String(item.remote || "").slice(0, 7)}）`))),
             h("div", { className: "qbw-hint", style: { marginTop: "4px" } },
-              `${item.dir} · ${item.branch ?? ""}${item.dirty ? ` · ⚠️ 本地有 ${item.dirty} 处改动` : ""}${item.ahead ? ` · ⚠️ 本地领先 ${item.ahead}` : ""}${item.channel === "release" ? " · 版本清单" : " · git"}`),
+              `${item.dir} · ${item.branch ?? ""}${item.dirty ? ` · ⚠️ 本地有 ${item.dirty} 处改动` : ""}${item.ahead ? ` · ⚠️ 本地领先 ${item.ahead}` : ""} · ${item.channel === "release" ? "版本清单" : item.channel === "version" ? "提交追踪" : "git 仓库"}`),
             item.blocked ? h("div", { className: "qbw-hint", style: { color: "#c0392b" } }, `不能自动更新：${item.blocked}`) : null,
+            item.blocked ? h("div", { className: "qbw-hint" }, "处理办法：本仓库有未提交改动时，先 commit/stash 再更新；或者直接用新版本的 zip 覆盖安装。") : null,
             (item.changelog ?? []).length ? h("ul", { style: { margin: "6px 0 0 18px", padding: 0, fontSize: "11.5px", lineHeight: "18px", opacity: 0.82 } },
               item.changelog.slice(0, 8).map((line, index) => h("li", { key: index }, line))) : null,
             (item.changelog ?? []).length > 8 ? h("div", { className: "qbw-hint" }, `…另有 ${item.changelog.length - 8} 条`) : null)) : h("p", null, "当前没有可用更新。"),
