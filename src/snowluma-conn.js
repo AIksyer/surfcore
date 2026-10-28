@@ -26,11 +26,22 @@ import path from 'node:path';
  */
 export function snowLumaHomeCandidates({ cfg = null } = {}) {
   const out = [];
-  const push = (p) => { if (p && !out.includes(p)) out.push(p); };
+  const push = (p) => { const v = String(p || '').trim(); if (v && !out.includes(v)) out.push(v); };
   const sl = cfg?.snowluma ?? cfg ?? {};
-  if (sl.homeDir) push(String(sl.homeDir));
-  if (sl.launcherPath) push(path.dirname(String(sl.launcherPath)));
-  if (process.env.SNOWLUMA_HOME) push(process.env.SNOWLUMA_HOME);
+  // 一个"根目录"可能有两种写法：SnowLuma2 根（里面是 app/）或 app 目录（里面有 config/）。
+  // 以前只取 dirname(launcherPath)：用户填 D:\Tools\SnowLuma2 时会被算成 D:\Tools → 永远检测不到。
+  const expand = (raw) => {
+    const v = String(raw || '').trim();
+    if (!v) return;
+    push(v);
+    push(path.join(v, 'app'));
+    const dir = path.dirname(v);
+    push(dir);
+    push(path.join(dir, 'app'));
+  };
+  if (sl.homeDir) expand(sl.homeDir);
+  if (sl.launcherPath) expand(sl.launcherPath);
+  if (process.env.SNOWLUMA_HOME) expand(process.env.SNOWLUMA_HOME);
   return out;
 }
 

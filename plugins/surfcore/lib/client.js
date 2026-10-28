@@ -743,7 +743,7 @@ window.__ModuleLoader__.load({
         // 和 B站 owner.mid 一起保存，避免两个入口各改一边。
         F("agentPreset", "一代 preset", "默认 qq-chat"),
         F("workspaceTitle", "工作区名称", "QQ 会话在 DSH 里的归组名"),
-        F("sessionCwd", "会话工作目录", "留空用 surfcore 根目录"),
+F("sessionCwd", "会话工作目录", "留空用 surfcore 根目录", "text", { browse: "dir" }),
       ]},
       { group: "SnowLuma", note: "OneBot 网关；「一键启动」只在你点击时打开本机已安装的 SnowLuma 窗口，不安装、不部署、不代扫码", fields: [
         F("snowluma.wsUrl", "OneBot WebSocket", "例如 ws://127.0.0.1:3001"),
@@ -752,9 +752,9 @@ window.__ModuleLoader__.load({
         F("snowluma.followDiscoveredEndpoint", "跟随自发现端点", "网关换端口时自动跟随", "switch"),
         F("snowluma.silenceWarnMs", "静默告警阈值（ms）", "多久没事件包就警告", "number", { min: 60000 }),
         F("snowluma.allowLaunch", "允许插件打开 SnowLuma", "默认关；开启后一键启动会弹出 SnowLuma 窗口，仍需你扫码", "switch"),
-        F("snowluma.launcherPath", "SnowLuma 安装目录", "例如 D:\\Tools\\SnowLuma2；用于找 app\\launcher.bat", "text", { browse: "dir" }),
+        F("snowluma.launcherPath", "SnowLuma 安装目录", "解压出来的根目录（里面有 app）；例如 D:/Tools/SnowLuma2", "text", { browse: "dir" }),
         F("snowluma.launchScript", "启动脚本（可选）", "留空自动找 安装目录\\app\\launcher.bat", "text", { wide: true }),
-        F("snowluma.homeDir", "SnowLuma home", "可留空"),
+        F("snowluma.homeDir", "SnowLuma home（app 目录）", "内含 config 的那个目录，一般是 安装目录 下的 app；填错会导致「检测不到」", "text", { browse: "dir" }),
       ]},
       { group: "控制台", note: "桥接本地控制台", fields: [
         F("consolePort", "控制台端口", "默认 3100", "number", { min: 1024, max: 65535 }),
@@ -1091,7 +1091,7 @@ window.__ModuleLoader__.load({
         F("notify.args", "命令参数", "JSON 数组", "json"),
       ]},
       { group: "工具链", fields: [
-        F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "text", { wide: true }),
+F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "text", { wide: true, browse: "file" }),
       ]},
     ];
 
@@ -1878,7 +1878,7 @@ window.__ModuleLoader__.load({
       ]});
       groups.push({ group: "语音", fields: [
         F("socialV2.voice.enabled", "启用语音发送", "", "switch"),
-        F("socialV2.voice.dir", "语音库目录", "相对 surfcore 根目录", "text"),
+F("socialV2.voice.dir", "语音库目录", "相对 surfcore 根目录；也可以点「浏览…」选绝对路径（需打开下面的开关）", "text", { browse: "dir" }),
         F("socialV2.voice.maxSeconds", "最长秒数", "", "number", { min: 1 }),
         F("socialV2.voice.maxBytes", "最大字节", "", "number"),
         F("socialV2.voice.maxPerMinute", "每分钟最多", "", "number", { min: 0 }),
@@ -1886,7 +1886,7 @@ window.__ModuleLoader__.load({
         F("socialV2.voice.allowAbsolutePath", "允许绝对路径", "⚠️ 会扩大文件读取面", "switch"),
         F("socialV2.voice.defaultVolume", "默认音量倍数", "", "number", { min: 0, max: 4, step: 0.1 }),
         F("socialV2.voice.loudness", "响度档位", "quiet / normal / loud", "select", { options: [["quiet", "quiet"], ["normal", "normal"], ["loud", "loud"]] }),
-        F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide: true }),
+F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide: true, browse: "file" }),
         F("socialV2.voice.autoReadback", "自动回读", "", "switch"),
       ]});
       const filtered = query.trim()
@@ -3151,6 +3151,7 @@ window.__ModuleLoader__.load({
       const [packs, setPacks] = useState([]);
       const [packsDir, setPacksDir] = useState("");
       const [dirInput, setDirInput] = useState("");
+      const [adoptInput, setAdoptInput] = useState("");
       const [rules, setRules] = useState(null);
       const [err, setErr] = useState("");
       const [busyId, setBusyId] = useState("");
@@ -3311,6 +3312,25 @@ window.__ModuleLoader__.load({
               } catch (e) { toast(`✗ ${e.message}`); }
             } }, "保存路径")),
           h("div", { style: { fontSize: "12px", opacity: 0.65, marginTop: "6px" } }, "当前生效：", h("code", null, packsDir || "（读不到）"))),
+        h("div", { style: { marginTop: "10px", padding: "10px 12px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px" } },
+          h("div", { style: { fontSize: "13px", fontWeight: 600 } }, "已有安装？手动指定包目录"),
+          h("div", { style: { fontSize: "12px", opacity: 0.75, marginTop: "2px" } },
+            "选到 voice-local / voice-cloud 那一层（里面有 config.toml）或它的上一级都可以；识别不到时用这个最稳。"),
+          h("div", { style: { display: "flex", gap: "8px", marginTop: "8px", flexWrap: "wrap" } },
+            h("input", { className: "qbw-input", value: adoptInput, placeholder: "D:/surfcore/state/voice-packs/voice-local", style: { flex: "1 1 320px" }, onChange: (e) => setAdoptInput(e.target.value) }),
+            h(Browse, { mode: "dir", title: "选择已安装的语音包目录", onPick: (v) => setAdoptInput(v) }),
+            h(Btn, { kind: "qbw-btn2", onClick: async () => {
+              const raw = String(adoptInput || "").trim();
+              if (!raw) { if (toast) toast("✗ 先选一个目录"); return; }
+              // 选到 .../voice-local 时，base 取上一级；选到 base 就原样用。
+              const norm = raw.split(String.fromCharCode(92)).join("/");
+              const base = /(voice-local|voice-cloud)$/i.test(norm) ? norm.replace(/[^/]+$/, "") : norm;
+              try {
+                await api("/config", { method: "POST", body: { qq: { voicePacks: { dir: base.split("\\").join("/") } } } });
+                if (toast) toast(`✓ 已指向 ${base}，识别中…`);
+                await load();
+              } catch (e) { if (toast) toast(`✗ ${e.message}`); }
+            } }, "用这个目录"))),
 
 
 

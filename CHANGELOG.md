@@ -4,6 +4,21 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.6.11] - 2026-10-28
+
+### 修复
+
+- **SnowLuma「装好了但检测不到」**：用户填 `D:\Tools\SnowLuma2` 时，代码只取 `dirname` → 算成 `D:\Tools`，
+  而配置在 `SnowLuma2pp\config` 下，于是永远检测不到。现在候选目录展开为
+  `填写路径 / 填写路径pp / 上一级 / 上一级pp`；`SnowLuma home（app 目录）` 也加了「浏览…」和更清楚的说明。
+
+### 新增
+
+- **语音包可手动指定目录**：语音页新增「已有安装？手动指定包目录」，选到 `voice-local` 或它的上一级都行，
+  保存后按多候选目录识别；这是"自动识别不到"时最稳的兜底。
+- **所有路径类字段都配了「浏览…」**：会话工作目录、bili.mjs 路径、语音库目录、ffmpeg 路径、
+  SnowLuma 安装目录 / home、语音安装目录 / 已有包目录、桌宠安装目录 / Electron / 安装包 zip。
+
 ## [0.6.10] - 2026-10-28
 
 ### 修复
