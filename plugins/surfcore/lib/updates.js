@@ -99,6 +99,40 @@ function semverCompare(a, b) {
 }
 
 const latestCache = new Map(); // repo -> { tag, url, at }
+const commitShaCache = new Map(); // repo -> { sha, at }
+
+async function fetchCommitSha(repo) {
+  const cached = commitShaCache.get(repo);
+  if (cached && Date.now() - cached.at < 5 * 60_000) return cached.sha;
+  try {
+    const res = await fetch(`https://api.github.com/repos/${repo}/commits/main`, {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'surfcore-updates' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return cached?.sha ?? '';
+    const json = await res.json();
+    const sha = String(json?.sha ?? '');
+    if (sha) commitShaCache.set(repo, { sha, at: Date.now() });
+    return sha;
+  } catch {
+    return cached?.sha ?? '';
+  }
+}
+
+/** 本地安装记录（voice 包在 install 时写入）：{ version, sha, at } */
+export function readInstalledMeta(dir) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(dir, '.installed-meta.json'), 'utf8'));
+  } catch { return null; }
+}
+
+export function writeInstalledMeta(dir, meta) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, '.installed-meta.json'), `${JSON.stringify({ ...meta, at: new Date().toISOString() }, null, 2)}
+`, 'utf8');
+  } catch {}
+}
 const releaseManifestCache = new Map(); // versionUrl -> { json, at }
 
 /**
@@ -182,12 +216,43 @@ export async function inspectVersionComponent(component, { fetch: doFetch = true
   const repo = String(component?.versionRepo ?? '').trim();
   const base = { id, name, dir: dir || String(component?.dir ?? ''), kind: 'version', channel: 'version' };
   if (!repo) return { ...base, available: false, reason: '没有配置版本仓库' };
+  // 版本来源：package.json → version.json → .installed-meta.json（语音包没有 package.json）
   let installedVersion = '';
-  try {
-    installedVersion = String(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version ?? '');
-  } catch {}
-  if (!installedVersion) return { ...base, available: false, installedVersion: '', reason: '读不到本地 package.json' };
+  try { installedVersion = String(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version ?? ''); } catch {}
+  if (!installedVersion) {
+    try { installedVersion = String(JSON.parse(fs.readFileSync(path.join(dir, 'version.json'), 'utf8')).version ?? ''); } catch {}
+  }
+  const meta = readInstalledMeta(dir);
+  if (!installedVersion && meta?.version) installedVersion = String(meta.version);
+  if (!dir) return { ...base, available: false, installedVersion: '', reason: '安装目录不存在（还没装）' };
+  if (!installedVersion && !meta) return { ...base, available: false, installedVersion: '', reason: '目录里没有 version.json / .installed-meta.json（还没装好，或装到了别的目录）' };
   if (!doFetch) return { ...base, available: true, installedVersion, latestVersion: null, updateAvailable: false, reason: '本次未拉取' };
+
+  // 提交级比对：语音包这类"没有发版号"的组件，按远端 main 的 commit 判断有没有新提交。
+  const remoteSha = await fetchCommitSha(repo).catch(() => '');
+  if (remoteSha) {
+    const localSha = String(meta?.sha ?? '');
+    if (localSha && localSha !== remoteSha) {
+      return {
+        ...base, available: true, installedVersion: installedVersion || localSha.slice(0, 7),
+        latestVersion: remoteSha.slice(0, 7), updateAvailable: true,
+        remoteSha, localSha, channel: 'version',
+        reason: `远端有新提交（${localSha.slice(0, 7)} → ${remoteSha.slice(0, 7)}）`,
+      };
+    }
+    if (!localSha) {
+      return {
+        ...base, available: true, installedVersion, latestVersion: remoteSha.slice(0, 7),
+        updateAvailable: false, remoteSha, channel: 'version',
+        reason: '这个安装是旧版本装的，没有提交记录；「检查更新」只能按版本号比对，重装一次后即可按提交追踪',
+      };
+    }
+    return {
+      ...base, available: true, installedVersion, latestVersion: installedVersion || remoteSha.slice(0, 7),
+      updateAvailable: false, remoteSha, localSha, channel: 'version',
+      reason: '已是最新（提交一致）',
+    };
+  }
   let latest = await fetchLatestByRedirect(repo);
   if (!latest) latest = await fetchLatestRelease(repo);
   // redirect 只看得到"最新 Release"；如果它不比本地新，再花一次 API 查 tag 复核
@@ -234,6 +299,15 @@ export async function inspectComponent(component, opts = {}) {
     if (inside.ok && inside.stdout.trim() === 'true') return inspectGitComponent(component, opts);
   }
   if (component?.versionUrl) return inspectReleaseComponent(component, opts);
+  // 没有版本清单、但有版本仓库 → 按「提交级比对」查（语音包就是这种：
+  // 没有 package.json、也不发 release，只有 main 上的提交）。
+  if (component?.versionRepo) {
+    const dir2 = normalizeDir(component?.dir);
+    const hasAny = dir2 && (fs.existsSync(path.join(dir2, 'package.json'))
+      || fs.existsSync(path.join(dir2, 'version.json'))
+      || fs.existsSync(path.join(dir2, '.installed-meta.json')));
+    if (hasAny) return inspectVersionComponent(component, opts);
+  }
   const git = await inspectGitComponent(component, opts);
   if (git.available || !component?.versionRepo) return git;
   const byVersion = await inspectVersionComponent(component, opts).catch(() => null);
@@ -692,6 +766,7 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
 
       const staged = stageDeferredApply({
         kind: 'zip', component: String(item.id), target: dir, staging: src, to: String(report?.latestVersion ?? ''),
+        meta: { version: String(report?.latestVersion ?? ''), sha: String(report?.remoteSha ?? '') },
       });
       pluginLog(`[updates] ${item.id} 已暂存 v${report?.latestVersion ?? '?'}，等 DSH 退出后应用（pid=${staged.pid ?? '?'}）`);
       return {

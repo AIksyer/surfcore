@@ -3156,6 +3156,7 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
       const [packsDir, setPacksDir] = useState("");
       const [dirInput, setDirInput] = useState("");
       const [adoptInput, setAdoptInput] = useState("");
+      const [mirror, setMirror] = useState("");
       const [rules, setRules] = useState(null);
       const [err, setErr] = useState("");
       const [busyId, setBusyId] = useState("");
@@ -3213,7 +3214,7 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
         setBusyId(id);
         setMsg((m) => ({ ...m, [id]: action === "install" ? "开始安装…" : "处理中…" }));
         try {
-          await api("/voice/packs/" + action, { method: "POST", body: { id, ...(body || {}) } });
+          await api("/voice/packs/" + action, { method: "POST", body: { id, ...(action === "install" ? { mirror } : {}), ...(body || {}) } });
           if (action === "install") {
             const done = await poll(id);
             setMsg((m) => ({ ...m, [id]: done === "ok" ? "✓ 安装完成" : done === "failed" ? "✗ 安装失败：见上方进度条下方的原因" : "⚠️ 安装还没完成（可重试）" }));
@@ -3310,6 +3311,23 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           h("div", { style: { fontSize: "12px", opacity: 0.65, marginTop: "6px" } }, "只能运行一个；切换会自动停掉另一个。")),
         packs.map(card),
 
+        h("div", { style: { marginTop: "10px", padding: "10px 12px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px" } },
+          h("div", { style: { fontSize: "13px", fontWeight: 600 } }, "下载链路"),
+          h("div", { style: { fontSize: "12px", opacity: 0.75, marginTop: "2px" } },
+            "官方源慢或连不上时换镜像。内容都有 sha256 校验，镜像方看不到你的会话，但能看到你下了什么。"),
+          h("div", { style: { display: "flex", gap: "8px", marginTop: "8px", flexWrap: "wrap" } },
+            ...[
+              { id: "", label: "官方（GitHub）" },
+              { id: "https://ghfast.top", label: "镜像 · ghfast" },
+              { id: "https://gh-proxy.com", label: "镜像 · gh-proxy" },
+              { id: "https://ghproxy.net", label: "镜像 · ghproxy" },
+            ].map((opt) => h(Btn, {
+              key: opt.id || "official",
+              kind: mirror === opt.id ? "qbw-btn" : "qbw-btn2",
+              onClick: () => setMirror(opt.id),
+            }, (mirror === opt.id ? "● " : "") + opt.label))),
+          h("div", { style: { fontSize: "12px", opacity: 0.65, marginTop: "6px" } },
+            mirror ? `当前：${mirror}（下载时会拼在原地址前面）` : "当前：官方源；分卷下载默认 3 路并发")),
         h("div", { style: { marginTop: "10px", padding: "10px 12px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px" } },
           h("div", { style: { fontSize: "13px", fontWeight: 600 } }, "安装目录"),
           h("div", { style: { fontSize: "12px", opacity: 0.75, marginTop: "2px" } },

@@ -4,6 +4,36 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.6.16] - 2026-10-28
+
+### 新增
+
+- **下载链路可选**：语音页新增「下载链路」卡片，可在
+  官方（GitHub）/ `ghfast.top` / `gh-proxy.com` / `ghproxy.net` 之间切换；
+  选中项以 `SURFCORE_GH_MIRROR` 传给包内脚本，内容仍以 sha256 为准。
+  实测：`ghfast.top` 当前不可用（000），`gh-proxy.com` / `ghproxy.net` 可用（200）——所以给多个让用户自己试。
+- **分卷并发下载**：默认 3 路并发（`SURFCORE_DOWNLOAD_JOBS=1..6` 可调）。
+  国内单连接常被限速，并发通常快 2~4 倍，且断一条只补那一卷。
+  （脚本在 `surfvoicelocal` / `surfvoicecloud`，已推送）
+
+### 修复
+
+- **语音包「不可查」**：更新面板里两个语音包一直显示"不可查（读不到本地 package.json）"。
+  原因：语音包没有 `package.json`，也不是 git 工作区，检查逻辑直接放弃。
+  现在：
+  - 版本来源按 `package.json → version.json → .installed-meta.json` 依次回退；
+  - 安装/更新完成时写 `.installed-meta.json`（含版本与远端 commit sha）；
+  - 「检查更新」对这类组件按**远端 main 的 commit** 比对：有新提交就提示更新，
+    `本地 sha → 远端 sha` 直接显示在原因里；
+  - 旧安装没有 meta 时也能查，只说明"没有提交记录，重装后可按提交追踪"，不再报"不可查"。
+
+### 验证
+
+- 新增 `test-updates-voice.mjs`（已进插件 `npm test`）：有 meta → 可查且提示新提交；
+  无 meta → 可查且不报"读不到 package.json"；空目录 → 明确"还没装"；
+- 4 分卷 × 637KB 并发下载 → 合并 → sha256 通过 → 解压成功；
+- `npm run test:audit` 77/77；版本一致性通过。
+
 ## [0.6.15] - 2026-10-28
 
 ### 新增

@@ -309,7 +309,7 @@ async function clearPackKeepingAssets(dir) {
   await fsp.rm(keepDir, { recursive: true, force: true });
 }
 
-async function install(id, { force = false } = {}) {
+async function install(id, { force = false, mirror = '', jobs = 0 } = {}) {
     const m = manifests(cfg).find((x) => x.id === id);
     if (!m) throw new Error(`未知语音包：${id}`);
     // 上一次已经结束（完成/失败）的安装记录要清掉，否则会永远卡在"正在安装中"，
@@ -369,8 +369,11 @@ async function install(id, { force = false } = {}) {
           rec.phase = script.includes('bootstrap') ? '安装 Python 依赖（首次 5~40 分钟）' : '拉取模型（可能几分钟）';
           rec.progress = 99;
           const okPost = await new Promise((resolve) => {
+            const env = { ...process.env };
+            if (mirror) env.SURFCORE_GH_MIRROR = String(mirror);
+            if (jobs) env.SURFCORE_DOWNLOAD_JOBS = String(jobs);
             const child = spawn(process.execPath, [path.join(dir, script)], {
-              cwd: dir, windowsHide: true, env: { ...process.env },
+              cwd: dir, windowsHide: true, env,
             });
             let out = '';
             const timer = setTimeout(() => { try { child.kill(); } catch {} resolve(false); }, 45 * 60_000);
@@ -409,6 +412,20 @@ async function install(id, { force = false } = {}) {
         state.packs = state.packs || {};
         state.packs[id] = { enabled: true, installedAt: new Date().toISOString(), version: m.version };
         await writeState(cfg, state);
+        // 记录安装版本 + 远端提交，供「检查更新」做提交级比对（语音包没有 package.json）。
+        try {
+          let sha = '';
+          if (m.repo) {
+            const r = await fetch(`https://api.github.com/repos/${m.repo}/commits/main`, {
+              headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'surfcore-voice' },
+              signal: AbortSignal.timeout(8000),
+            });
+            if (r.ok) sha = String((await r.json())?.sha ?? '');
+          }
+          await fsp.writeFile(path.join(dir, '.installed-meta.json'),
+            `${JSON.stringify({ version: m.version || '', sha, at: new Date().toISOString() }, null, 2)}
+`, 'utf8');
+        } catch {}
         rec.phase = '完成';
         rec.progress = 100;
         setTimeout(() => activeInstalls.delete(id), 5000).unref?.();

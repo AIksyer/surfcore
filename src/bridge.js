@@ -6473,7 +6473,11 @@ async function main() {
             }
             if (req.method === 'POST' && url.pathname === '/api/voice/packs/install') {
               const body = await readBody();
-              sendJson(await vp.install(String(body.id || ''), { force: !!body.force }));
+              sendJson(await vp.install(String(body.id || ''), {
+                force: !!body.force,
+                mirror: String(body.mirror || ''),
+                jobs: Number(body.jobs) || 0,
+              }));
               return;
             }
             if (req.method === 'POST' && url.pathname === '/api/voice/packs/remove') {

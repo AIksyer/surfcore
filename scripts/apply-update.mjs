@@ -124,6 +124,15 @@ try {
     process.exit(4);
   }
 
+  // 写安装记录（供「检查更新」做提交级比对）
+  if (pending.meta) {
+    try {
+      fs.writeFileSync(path.join(pending.target, '.installed-meta.json'),
+        `${JSON.stringify({ ...pending.meta, at: new Date().toISOString() }, null, 2)}
+`, 'utf8');
+      log('[apply-update] 已写 .installed-meta.json');
+    } catch (e) { log(`[apply-update] 写 meta 失败：${e.message}`); }
+  }
   log(`[apply-update] 完成：${pending.component} → v${pending.to ?? '?'}`);
   try { fs.rmSync(pending.staging, { recursive: true, force: true }); } catch {}
   try { fs.rmSync(pendingFile, { force: true }); } catch {}
