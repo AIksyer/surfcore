@@ -13,6 +13,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { wavDurationMs } from './voice-tts.js';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -807,7 +808,10 @@ async function install(id, { force = false, mirror = '', jobs = 0 } = {}) {
     });
     if (!res.ok) throw new Error(`合成失败：HTTP ${res.status}`);
     const buf = Buffer.from(await res.arrayBuffer());
-    return { ok: true, ms: Date.now() - t0, bytes: buf.length, seconds: +(buf.length / 2 / 24000).toFixed(2) };
+    // 用真实 WAV 头算时长：以前 bytes/2/24000 是按 16bit/24k 猜的，遇到 22050/32bit 就报 0 或错值。
+    let seconds = 0;
+    try { seconds = +(wavDurationMs(buf) / 1000).toFixed(2); } catch { seconds = +(buf.length / 2 / 24000).toFixed(2); }
+    return { ok: true, ms: Date.now() - t0, bytes: buf.length, seconds, duration: seconds };
   }
 
   return { list, install, remove, start, stop, activate, cleanPartial, cancelInstall, cloudConfig, readCloudConfig, cloudStats, test, sampleFile, setEnabled, manifests, packsDir };

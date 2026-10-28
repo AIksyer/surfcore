@@ -2607,3 +2607,15 @@ return list[0] ?? pool[0];
   新增 `cancelInstall` + `/api/voice/packs/cancel` + UI「取消安装」；pip 默认清华源、`--progress-bar off`；
   超时文案改成"还在安装"。
 - **验证**：全量测试通过；真实机器耗时与取消清理未验证。
+
+## 本地语音"装完还是不能用"
+
+- **现象**：模型都下完了，但 `vendor/`、`voices/`、`voicepack/` 跑到 `models/` 下面；
+  修好位置后 GSV 报 `No module named 'jieba_fast'`；合成正常但她说"没有语音入口"。
+- **根因**：① `fetch-models.mjs` 把所有归档都解压到 `models/`（归档内部自带 `vendor/`、`voices/` 前缀）；
+  ② vendor 代码硬 import `jieba_fast`，Windows 上编译不了；③ MCP 工具列表在进程启动时固定，
+  后开的语音工具不会出现在已运行的进程里。
+- **修法**（v0.6.22）：models.json 增加 `dest`（vendor/voicepack → `.`，models → `models`）；
+  bootstrap 造 `jieba_fast` 替身（转发 jieba）；装 imageio-ffmpeg 并写 `config.toml [ffmpeg] path`；
+  requirements 补 torchmetrics/imageio-ffmpeg；pip 加包内缓存；UI 提示"改开关要重启 DSH"。
+- **验证**：布局用 file:// 归档实测通过；真机 import/ffmpeg 未验证。

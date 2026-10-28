@@ -4,6 +4,23 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.6.22] - 2026-10-28
+
+### 修复（本地语音"装完还是不能用"）
+
+- **归档解压落点**：`fetch-models.mjs` 以前把所有归档都解到 `models/`，导致
+  `models/vendor/...`、`models/voices/...`，而 `gsv.bat` 找包根 `vendor/`、voxd 找包根 `voices/`。
+  现在 models.json 支持 `dest`（vendor/voicepack → `.`，models → `models`）。
+- **`jieba_fast` 装不上**：Windows 没有轮子，vendor 代码又硬 import。安装时自动生成
+  `jieba_fast` 替身（转发到 `jieba`，含 `posseg`）。
+- **ffmpeg**：改用 `imageio-ffmpeg` 自带二进制，并自动写进 `config.toml [ffmpeg] path`。
+- **依赖清单**补 `torchmetrics`、`imageio-ffmpeg`；pip 增加包内缓存 `--cache-dir`。
+- **试听时长**改用真实 WAV 头计算（并补 `duration` 字段），不再出现"合成 0ms"。
+- **UI 提示**：改完语音总开关 / TTS / 发语音工具后必须重启 DSH ——
+  工具列表在 MCP 进程启动时固定，不重启她会说"没有语音入口"。
+
+> 调查记录：[本地语音装完不可用](docs/cases/2026-10-28-voice-pack-layout-and-imports.md)
+
 ## [0.6.21] - 2026-10-28
 
 ### 修复
