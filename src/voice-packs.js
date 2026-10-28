@@ -47,6 +47,8 @@ export const DEFAULT_MANIFESTS = [
     enginePort: 9880,
     repo: 'Mieksido/surfvoicelocal',
     postInstall: ['scripts/fetch-models.mjs', 'scripts/bootstrap-env.mjs'],
+    // 装完必须存在的目录（否则就是"只下了代码、模型没下完"）
+    verifyDirs: ['models', 'vendor/GPT-SoVITS'],
     engineWarmupHint: '本地音色引擎加载约 40 秒，期间发语音会失败，稍等再试',
     // 开发期用本地目录；分发期换成 GitHub Releases 的 zip 链接
     url: process.env.SURFCORE_VOICE_LOCAL_URL || devPackUrl('voice-local'),
@@ -68,6 +70,7 @@ export const DEFAULT_MANIFESTS = [
     stopScript: 'stop.bat',
     repo: 'Mieksido/surfvoicecloud',
     postInstall: ['scripts/fetch-models.mjs', 'scripts/bootstrap-env.mjs'],
+    verifyDirs: ['models'],
     url: process.env.SURFCORE_VOICE_CLOUD_URL || devPackUrl('voice-cloud'),
     requires: { gpu: false, network: true },
     voices: [{ id: 'age12-cloud', label: '小语（云端 · 女童声）' }],
@@ -312,6 +315,13 @@ export function createVoicePacks(cfg) {
           rec.phase = phase;
         });
         await flattenSingleDir(dir);
+        // GitHub archive 解压出来可能带只读属性，后面复制 config / 拉模型会写不进去。
+        try {
+          await new Promise((resolve) => {
+            const c = spawn('cmd', ['/c', `attrib -R "${dir}\*" /S /D`], { windowsHide: true, stdio: 'ignore' });
+            c.on('exit', resolve); c.on('error', resolve);
+          });
+        } catch {}
         // 仓库里只有 config.example.toml（真实配置不入库）：装完先复制成 config.toml，
         // 否则 voxd 起不来、用户看到"包里没有 config.toml"。
         if (!(await exists(path.join(dir, 'config.toml'))) && (await exists(path.join(dir, 'config.example.toml')))) {
@@ -325,7 +335,9 @@ export function createVoicePacks(cfg) {
         const postScripts = (Array.isArray(m.postInstall) ? m.postInstall : (m.postInstall ? [m.postInstall] : []))
           .filter((x) => x);
         for (const script of postScripts) {
-          if (!(await exists(path.join(dir, script)))) continue;
+          if (!(await exists(path.join(dir, script)))) {
+            throw new Error(`安装包里缺少 ${script}（可能下载到了不完整的版本），请重试或先删掉 ${dir} 再装`);
+          }
           rec.phase = script.includes('bootstrap') ? '安装 Python 依赖（首次 5~40 分钟）' : '拉取模型（可能几分钟）';
           rec.progress = 99;
           const okPost = await new Promise((resolve) => {
@@ -334,12 +346,36 @@ export function createVoicePacks(cfg) {
             });
             let out = '';
             const timer = setTimeout(() => { try { child.kill(); } catch {} resolve(false); }, 45 * 60_000);
-            child.stdout?.on('data', (d) => { out = (out + String(d)).slice(-2000); rec.log = out; });
-            child.stderr?.on('data', (d) => { out = (out + String(d)).slice(-2000); rec.log = out; });
+            const onChunk = (d) => {
+              const text = String(d);
+              out = (out + text).slice(-4000); rec.log = out;
+              const m2 = /(\d{1,3})\s*%/.exec(text);
+              if (m2) {
+                const pct = Math.min(100, Math.max(0, Number(m2[1])));
+                rec.progress = Math.min(99, Math.round(90 + pct * 0.09));
+                rec.phase = `${script.includes('bootstrap') ? '安装依赖' : '拉取模型'} ${pct}%`;
+              }
+            };
+            child.stdout?.on('data', onChunk);
+            child.stderr?.on('data', onChunk);
             child.on('error', () => { clearTimeout(timer); resolve(false); });
             child.on('exit', (code) => { clearTimeout(timer); resolve(code === 0); });
           });
-          if (!okPost) throw new Error(`${script} 失败：${(rec.log || '').slice(-300) || '看包内日志'}`);
+          if (!okPost) throw new Error(`${script} 失败（可能网络中断/太慢）：${(rec.log || '').slice(-600) || '看包内日志'}`);
+        }
+        // 完整性校验：只有代码、模型没下完的"假安装"必须报错，不能显示完成。
+        const missing = [];
+        for (const rel of (Array.isArray(m.verifyDirs) ? m.verifyDirs : [])) {
+          const abs2 = path.join(dir, rel);
+          let okDir = false;
+          try {
+            const st2 = await fsp.stat(abs2);
+            okDir = st2.isDirectory() ? (await fsp.readdir(abs2)).length > 0 : st2.size > 0;
+          } catch { okDir = false; }
+          if (!okDir) missing.push(rel);
+        }
+        if (missing.length) {
+          throw new Error(`下载不完整：缺 ${missing.join('、')}（多半是模型下载中断）。点「安装」重试，或先删掉 ${dir} 再装；网络慢可以换时段再试`);
         }
         const state = await readState(cfg);
         state.packs = state.packs || {};

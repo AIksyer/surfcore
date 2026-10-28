@@ -4,6 +4,20 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.6.13] - 2026-10-28
+
+### 修复
+
+- **语音包「显示安装完成，实际只下了 490KB」**：三处叠加
+  ① 前端 `poll()` 超时/失败后**无条件**写「安装完成」，覆盖了失败原因；
+  ② 后端没有完整性校验，`fetch-models` 中断也标完成；
+  ③ 解压带只读属性，后续写模型可能失败。
+  现在：`poll` 返回真实状态并按状态写文案；装完校验 `verifyDirs`
+  （本地包要 `models` + `vendor/GPT-SoVITS`，云端要 `models`），缺就报失败并说明怎么重试；
+  解压后 `attrib -R` 去只读；后置脚本缺失直接报错；拉模型期间从脚本输出解析百分比。
+
+> 调查记录：[安装谎报完成](docs/cases/2026-10-28-voice-install-false-complete.md)
+
 ## [0.6.12] - 2026-10-28
 
 ### 修复

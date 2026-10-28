@@ -3184,11 +3184,12 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
             const r = await api("/voice/packs");
             setPacks(r.packs || []);
             const p = (r.packs || []).find((x) => x.id === id);
-            if (!p) return;
-            if (p.install && p.install.phase === "失败") { setMsg((m) => ({ ...m, [id]: p.install.error })); return; }
-            if (p.installed && !p.install) return;
+            if (!p) return "failed";
+            if (p.install && p.install.phase === "失败") { setMsg((m) => ({ ...m, [id]: "✗ " + (p.install.error || "安装失败") })); return "failed"; }
+            if (p.installed && !p.install) return "ok";
           } catch {}
         }
+        return "timeout";
       }, []);
 
       const runningId = ((packs.filter((p) => p.running)[0]) || {}).id || "";
@@ -3213,7 +3214,10 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
         setMsg((m) => ({ ...m, [id]: action === "install" ? "开始安装…" : "处理中…" }));
         try {
           await api("/voice/packs/" + action, { method: "POST", body: { id, ...(body || {}) } });
-          if (action === "install") { await poll(id); setMsg((m) => ({ ...m, [id]: "安装完成" })); }
+          if (action === "install") {
+            const done = await poll(id);
+            setMsg((m) => ({ ...m, [id]: done === "ok" ? "✓ 安装完成" : done === "failed" ? "✗ 安装失败：见上方进度条下方的原因" : "⚠️ 安装还没完成（可重试）" }));
+          }
           else setMsg((m) => ({ ...m, [id]: "" }));
           await load();
         } catch (e) {
