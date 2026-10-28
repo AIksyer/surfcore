@@ -69,7 +69,7 @@ import { createPetService, detectElectronPath, installElectronRuntime, ELECTRON_
 import { createPetChatService } from './pet-chat.js';
 import { createPetPurposeService } from './pet-purpose.js';
 import { createPetApiService } from './pet-api.js';
-import { createUpdatesService } from './updates.js';
+import { createUpdatesService, resumePendingApply } from './updates.js';
 import {
   adminFromSources, adminSummary, projectAdminSave,
 } from '../../../src/admin-identity.js';
@@ -171,6 +171,10 @@ export const inject = ['webServer', 'connection', 'sessionController'];
 
 export function apply(ctx) {
   ensureDirs();
+
+  // 上次的"退出后应用"可能没跑起来（Electron 宿主没带 ELECTRON_RUN_AS_NODE）：
+  // 这里重新排队，用户下次退出 DSH 就会应用（2026-10-28 反馈：点几次都还是旧版本）。
+  try { resumePendingApply({ stateDir: STATE_DIR, pluginLog }); } catch (error) { pluginLog('[updates] 启动重试失败：', String(error?.message ?? error)); }
 
   // 2026-10-22 起：`surface_core` 迁移期的一次性逻辑**已整段删除**。
   // 原因：当年为了把旧工作区改名，留了「有 .legacy-workspace 标记就删/移旧目录」的代码；

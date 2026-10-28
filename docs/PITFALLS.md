@@ -2576,3 +2576,14 @@ return list[0] ?? pool[0];
   bat 去 pause、改 netstat+taskkill、pythonw；start 收 stderr 且超时 taskkill 进程树；stop 加按端口强杀兜底；
   requirements 补全并替换 Windows 不友好包；bootstrap 加 pip 镜像回退并生成 tts_infer.yaml。
 - **验证**：`test-voice-flatten.mjs`（4 个场景）+ 全量测试；真机完整链路未验证。
+
+## 点「立即更新」没反应（版本一直不变）
+
+- **现象**：弹窗正常、点按钮无报错，但版本不变、下次检查又弹。
+- **根因**：更新改成"退出后由助手应用"，而 spawn 用的是 `process.execPath` —— 插件在 DSH（Electron）里，
+  这个值是宿主可执行文件；Electron 直接跑 `.mjs` **静默退出**（exit 0），助手从未执行。
+  部分环境自带 `ELECTRON_RUN_AS_NODE=1`，所以有人正常、有人永远失败。
+- **修法**（v0.6.19）：`helperSpawnEnv()` 给非 node 的 execPath 加 `ELECTRON_RUN_AS_NODE=1`；
+  助手写 `.started` 标记、插件 2.5 秒后校验；启动时发现 pending 就重新排队（自愈）。
+- **验证**：`test-update-helper-env.mjs`（环境变量 / 真执行 / 保留 config / 失败留证据）。
+- **注意**：≤0.6.18 的用户无法自动升级（他们身上的助手同样起不来），必须手动覆盖一次 zip。

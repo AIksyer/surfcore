@@ -147,6 +147,19 @@ async function fetchCommitSha(repo) {
 }
 
 /** 本地安装记录（voice 包在 install 时写入）：{ version, sha, at } */
+/**
+ * 生成"用 Node 跑 helper"的环境。
+ * 插件跑在 DSH（Electron）里时 process.execPath 是宿主可执行文件：
+ * 直接 spawn 一个 .mjs 会静默退出（实测 exit 0、什么都不做）→ 更新永远不落地。
+ * 加 ELECTRON_RUN_AS_NODE=1 才能当 Node 用（2026-10-28 用户反馈：点几次都还是旧版本）。
+ */
+export function helperSpawnEnv(execPath = process.execPath, baseEnv = process.env) {
+  const env = { ...baseEnv };
+  const base = path.basename(String(execPath || '')).toLowerCase();
+  if (base !== 'node' && base !== 'node.exe') env.ELECTRON_RUN_AS_NODE = '1';
+  return env;
+}
+
 export function readInstalledMeta(dir) {
   try {
     return JSON.parse(fs.readFileSync(path.join(dir, '.installed-meta.json'), 'utf8'));
@@ -821,7 +834,7 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
     }
   }
 
-  /** 写 pending 文件 + 起独立进程（等本宿主退出后执行覆盖）。 */
+/** 写 pending 文件 + 起独立进程（等本宿主退出后执行覆盖）。 */
   function stageDeferredApply(job) {
     const pendingFile = path.join(stateDir, 'updates-pending.json');
     const payload = {
@@ -841,8 +854,15 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
       stdio: 'ignore',
       windowsHide: true,
       cwd: stateDir,
+      env: helperSpawnEnv(),
     });
     child.unref();
+    // 2.5 秒后看 helper 有没有留 .started：Electron 没带 RUN_AS_NODE 时会静默退出，必须报出来。
+    const startedFile = `${pendingFile}.started`;
+    setTimeout(() => {
+      if (fs.existsSync(startedFile)) return;
+      pluginLog(`[updates] 更新助手没有启动（${pendingFile}）：请重启 DSH 让其重试，或手动覆盖 zip`);
+    }, 2500).unref?.();
     return { pid: child.pid, pendingFile };
   }
 
@@ -978,3 +998,34 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
 
   return { check, apply, dismiss, resetDismissed, status, startAutoCheck, dispose, file };
 }
+
+export { resumePendingApply };
+
+/**
+ * 启动时重试未完成的更新：上次的助手可能没跑起来（Electron 没带 RUN_AS_NODE）。
+ * 这里把 waitPid 改成当前进程并重新拉起 —— 用户下一次退出 DSH 就会应用。
+ */
+function resumePendingApply({ stateDir, pluginLog = () => {} } = {}) {
+  try {
+    const pendingFile = path.join(stateDir, 'updates-pending.json');
+    if (!fs.existsSync(pendingFile)) return false;
+    const pending = JSON.parse(fs.readFileSync(pendingFile, 'utf8'));
+    const started = `${pendingFile}.started`;
+    try { fs.rmSync(started, { force: true }); } catch {}
+    pending.waitPid = process.pid;
+    pending.resumedAt = new Date().toISOString();
+    fs.writeFileSync(pendingFile, `${JSON.stringify(pending, null, 2)}
+`, 'utf8');
+    const helper = path.join(REPO_ROOT, 'scripts', 'apply-update.mjs');
+    const child = spawn(process.execPath, [helper, '--pending', pendingFile], {
+      detached: true, stdio: 'ignore', windowsHide: true, cwd: stateDir, env: helperSpawnEnv(),
+    });
+    child.unref();
+    pluginLog(`[updates] 发现未完成的更新（${pending.component} → v${pending.to ?? '?'}），已重新排队（pid=${child.pid ?? '?'}）`);
+    return true;
+  } catch (error) {
+    pluginLog('[updates] 重试未完成更新失败：', String(error?.message ?? error));
+    return false;
+  }
+}
+

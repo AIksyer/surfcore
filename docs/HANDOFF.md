@@ -2370,6 +2370,14 @@
 
 ---
 
+## 安装进度规矩（2026-10-28 用户明确要求）
+
+**凡是"安装/下载"类操作，都必须有可见进度条**（`ProgressBar` 组件，`lib/client.js` 模块级）：
+
+- 有百分比就给 `pct`；拿不到百分比（pip 安装、合并解压）用不确定态 `indeterminate`；
+- 目前覆盖：语音包安装、桌宠安装、Electron 下载、一键安装（按步骤）、更新应用；
+- 新增安装入口时**必须**同时接进度条，并在 `npm test` 里能跑通（至少 `test-client-contract.mjs`）。
+
 ## 修 bug 记录规矩（2026-10-28 用户明确要求，优先级最高）
 
 **修完任何一个 bug，必须写一份 `docs/cases/YYYY-MM-DD-<slug>.md`，并在 `docs/cases/README.md` 的表格里登记一行。**

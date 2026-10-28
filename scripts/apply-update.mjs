@@ -40,6 +40,8 @@ if (!fs.existsSync(pendingFile)) {
 }
 
 const pending = JSON.parse(fs.readFileSync(pendingFile, 'utf8'));
+// 启动标记：插件侧 2.5 秒后检查它，确认"助手真的跑起来了"（Electron 没带 RUN_AS_NODE 时会静默退出）。
+try { fs.writeFileSync(`${pendingFile}.started`, JSON.stringify({ pid: process.pid, at: new Date().toISOString() })); } catch {}
 const logFile = pending.logFile || path.join(path.dirname(pendingFile), 'apply-update.log');
 const log = (msg) => {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
@@ -136,6 +138,7 @@ try {
   log(`[apply-update] 完成：${pending.component} → v${pending.to ?? '?'}`);
   try { fs.rmSync(pending.staging, { recursive: true, force: true }); } catch {}
   try { fs.rmSync(pendingFile, { force: true }); } catch {}
+  try { fs.rmSync(`${pendingFile}.started`, { force: true }); } catch {}
   try {
     const doneDir = path.join(path.dirname(pendingFile), 'updates-applied');
     fs.mkdirSync(doneDir, { recursive: true });

@@ -28,6 +28,17 @@ window.__ModuleLoader__.load({
     const API = "/dsh-surfcore/api";
 
   // 原生「浏览」：浏览器拿不到绝对路径，交给宿主进程弹 Windows 对话框。
+  // 统一进度条：所有安装入口都用它（用户要求"每个安装都要能明显看到进度"）。
+  function ProgressBar({ pct = 0, phase = "", err = "", indeterminate = false, style = {} }) {
+    const v = Math.max(0, Math.min(100, Number(pct) || 0));
+    return h("div", { style: { marginTop: "8px", ...style } },
+      h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "12px", opacity: 0.82, marginBottom: "4px" } },
+        h("span", null, phase || "安装中"),
+        h("span", null, indeterminate ? "…" : `${v}%`)),
+      h("div", { className: "qbw-progress" + (indeterminate ? " indet" : "") }, h("i", { style: { width: `${Math.max(2, v)}%` } })),
+      err ? h("div", { className: "qbw-err", style: { marginTop: "6px" } }, err) : null);
+  }
+
   async function browseNative(mode = "dir", title = "") {
     const q = `mode=${mode === "file" ? "file" : "dir"}&title=${encodeURIComponent(title)}`;
     const res = await fetch(`${API}/browse?${q}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(180000) });
@@ -76,6 +87,8 @@ window.__ModuleLoader__.load({
 .qbw-btn{background:#2f6fed;color:#fff;border:none;border-radius:6px;font-size:12.5px;min-height:29px;padding:0 12px;cursor:pointer;white-space:nowrap}
 .qbw-progress{height:6px;background:rgba(255,255,255,.14);border-radius:99px;overflow:hidden}
 .qbw-progress>i{display:block;height:100%;background:#2f6fed;border-radius:99px;transition:width .35s ease}
+.qbw-progress.indet>i{width:35%!important;animation:qbw-indet 1.1s ease-in-out infinite}
+@keyframes qbw-indet{0%{transform:translateX(-110%)}100%{transform:translateX(310%)}}
 .qbw-btn:disabled{opacity:.5;cursor:default}
 .qbw-btn:hover:not(:disabled){background:#2a63d4}
 .qbw-btn2{background:transparent;border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary)}
@@ -1220,6 +1233,7 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
           h("label", { style: { display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" } },
             h("input", { type: "checkbox", checked: never, onChange: (e) => setNever(e.target.checked), disabled: working }),
             h("span", { className: "qbw-hint" }, "不再提示本次更新（只对这次的远端版本生效；有更新提交时会重新提醒）")),
+          working ? h(ProgressBar, { phase: "正在下载/应用更新…", indeterminate: true }) : null,
           h("div", { className: "qbw-actions" },
             h(Btn, { kind: "qbw-btn2", onClick: () => (never ? dismissThis() : onClose?.()), disabled: working },
               never ? "不再提示本次" : "稍后"),
@@ -3261,12 +3275,12 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
         p.about && p.about.billing ? h("div", { style: { fontSize: "12px", marginTop: "6px", opacity: 0.75 } },
           p.about.billing, h("br"), p.about.disclaimer || "") : null,
         p.install
-          ? h("div", { style: { marginTop: "8px" } },
-            h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "12px", opacity: 0.85, marginBottom: "4px" } },
-              h("span", null, p.install.phase || "安装中"),
-              h("span", null, (p.install.progress || 0) + "%")),
-            h("div", { className: "qbw-progress" }, h("i", { style: { width: Math.max(2, Math.min(100, p.install.progress || 0)) + "%" } })),
-            p.install.error ? h("div", { className: "qbw-err", style: { marginTop: "6px" } }, p.install.error) : null)
+          ? h(ProgressBar, {
+            pct: p.install.progress,
+            phase: p.install.phase,
+            err: p.install.error,
+            indeterminate: /依赖|模型/.test(String(p.install.phase || '')) && Number(p.install.progress || 0) >= 99,
+          })
           : null,
         p.installed && p.dir ? h("div", { style: { fontSize: "12px", marginTop: "4px", opacity: 0.7 } }, "路径：", h("code", null, p.dir)) : null,
         p.enginePort && p.running && p.engineUp === false
@@ -3927,6 +3941,17 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
             h("div", { className: "qbw-hint", style: { marginTop: "8px" } }, "不会自动放行：只有你勾选的群会被加白。")) : null,
 
           flow.phase === "running" || flow.phase === "done" ? h("div", null,
+            (() => {
+              const steps = flow.steps ?? [];
+              const done = steps.filter((x) => x.status === "ok" || x.status === "fail").length;
+              const pct = steps.length ? Math.round((done / steps.length) * 100) : 0;
+              const cur = steps.find((x) => x.status !== "ok" && x.status !== "fail");
+              return h(ProgressBar, {
+                pct,
+                phase: flow.phase === "done" ? "安装完成" : `第 ${done + 1}/${steps.length || "?"} 步：${cur?.name ?? "准备中"}`,
+                indeterminate: flow.phase === "running" && !cur,
+              });
+            })(),
             (flow.steps ?? []).map((x) => h("div", { className: "qbw-kv", key: x.key + x.at },
               h("span", null, `${x.status === "ok" ? "✓" : x.status === "fail" ? "✗" : "⏳"} ${x.name}`),
               h("span", null, x.detail ?? ""))),
@@ -4399,15 +4424,6 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
         return v > 1024 * 1024 ? (v / 1024 / 1024).toFixed(1) + " MB" : Math.max(1, Math.round(v / 1024)) + " KB";
       };
       const kv = (k, v) => h("div", { className: "qbw-kv", key: k }, h("span", null, k), h("span", null, v));
-      const Bar = ({ pct, phase, err }) => {
-        const v = Math.max(0, Math.min(100, Number(pct) || 0));
-        return h("div", { style: { marginTop: "8px" } },
-          h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "12px", opacity: 0.8, marginBottom: "4px" } },
-            h("span", null, phase || "安装中"),
-            h("span", null, `${v}%`)),
-          h("div", { className: "qbw-progress" }, h("i", { style: { width: `${v}%` } })),
-          err ? h("div", { className: "qbw-err", style: { marginTop: "6px" } }, err) : null);
-      };
 
       return h("div", null,
         h("div", { className: "qbw-infobox" },
@@ -4419,7 +4435,7 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           st && st.installed ? kv("版本", st.version || "—") : null,
           st && st.installed ? kv("占用", fmt(st.sizeBytes)) : null,
           st && st.installed ? kv("目录", h("code", { className: "qbw-code" }, st.dir)) : null,
-          st && st.installing ? Bar({ pct: st.installing.progress, phase: st.installing.phase, err: st.installing.error }) : null,
+          st && st.installing ? h(ProgressBar, { pct: st.installing.progress, phase: st.installing.phase, err: st.installing.error, indeterminate: /依赖|模型/.test(String(st.installing.phase || '')) && Number(st.installing.progress || 0) >= 99 }) : null,
           h("div", { className: "qbw-actions" },
             !st || !st.installed ? h(Btn, { disabled: busy === "install" || !form.source.trim(), onClick: async () => {
               const r0 = await api("/pet/install", { method: "POST", body: {} }).catch((e) => ({ ok: false, error: e.message }));

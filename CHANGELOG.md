@@ -4,6 +4,24 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.6.19] - 2026-10-28
+
+### 修复
+
+- **点「立即更新」没反应、版本一直不变（0.6.15 用户实测）**：更新从 0.6.12 起改成
+  「退出后由助手应用」，但 spawn 用的是 `process.execPath` —— 插件跑在 DSH（Electron）里，
+  这个值是宿主可执行文件，Electron 直接跑 `.mjs` 会**静默退出（exit 0）**，助手从未执行。
+  现在：非 node 的 execPath 自动加 `ELECTRON_RUN_AS_NODE=1`；助手启动写 `.started` 标记，
+  插件 2.5 秒后校验；**启动时发现 pending 会自动重新排队**（自愈）；失败留 `.failed` 证据。
+
+### 新增
+
+- **所有安装入口统一进度条**（`ProgressBar` 组件）：
+  语音包安装（百分比 / 依赖与模型用不确定态动画）、桌宠安装、Electron 下载、
+  一键安装（第 N/M 步）、更新应用。
+
+> 调查记录：[更新助手从未执行](docs/cases/2026-10-28-update-helper-never-runs.md)
+
 ## [0.6.18] - 2026-10-28
 
 ### 修复
