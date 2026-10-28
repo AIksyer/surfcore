@@ -26,6 +26,15 @@ window.__ModuleLoader__.load({
     } = React;
 
     const API = "/dsh-surfcore/api";
+
+  // 原生「浏览」：浏览器拿不到绝对路径，交给宿主进程弹 Windows 对话框。
+  async function browseNative(mode = "dir", title = "") {
+    const q = `mode=${mode === "file" ? "file" : "dir"}&title=${encodeURIComponent(title)}`;
+    const res = await fetch(`${API}/browse?${q}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(180000) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+    return data;
+  }
     const CSS_TAG = "surfcore/console.css";
 
     const CSS = `
@@ -332,6 +341,19 @@ window.__ModuleLoader__.load({
         control = h("input", { ...common, type: "password", value: value ?? "", readOnly, placeholder: f.placeholder ?? "已设置（保持 ******** 不变）", onChange: (e) => onChange(e.target.value) });
       } else {
         control = h("input", { ...common, value: value ?? "", readOnly, placeholder: f.placeholder, onChange: (e) => onChange(e.target.value) });
+        if (f.browse && !readOnly) {
+          control = h("div", { style: { display: "flex", gap: "8px", alignItems: "center" } },
+            control,
+            h("button", {
+              type: "button",
+              className: "qbw-btn2",
+              onClick: async () => {
+                const r = await browseNative(f.browse, f.label || "选择路径").catch((e) => ({ ok: false, error: e.message }));
+                if (r.ok && r.path) onChange(String(r.path));
+                else if (!r.cancelled) (window.__surfcoreToast || console.warn)(r.error || "打不开选择框，请手动填写");
+              },
+            }, "浏览…"));
+        }
       }
       return h(Row, { label: f.label, hint: f.hint, badge: f.badge }, control);
     }
@@ -697,6 +719,17 @@ window.__ModuleLoader__.load({
 
     // ── 字段描述 ────────────────────────────────────────────────────────────
     const F = (path, label, hint, kind = "text", extra = {}) => ({ path: p(path), label, hint, kind, ...extra });
+    // 原生选择框：浏览器拿不到绝对路径，只能让宿主进程弹 Windows 对话框。
+    const Browse = ({ mode = "dir", onPick, title, label = "浏览…" }) => h(Btn, {
+      kind: "qbw-btn2",
+      onClick: async () => {
+        try {
+          const r = await browseNative(mode, title || (mode === "file" ? "选择文件" : "选择目录"));
+          if (r.ok && r.path) onPick(String(r.path));
+          else if (!r.cancelled) (window.__surfcoreToast || console.warn)(r.error || "打不开选择框，请手动填路径");
+        } catch (e) { (window.__surfcoreToast || console.warn)(e.message); }
+      },
+    }, label);
 
     const QQ_FIELDS = [
       { group: "连接与身份", note: "QQ 桥接 / DSH 连接", fields: [
@@ -719,7 +752,7 @@ window.__ModuleLoader__.load({
         F("snowluma.followDiscoveredEndpoint", "跟随自发现端点", "网关换端口时自动跟随", "switch"),
         F("snowluma.silenceWarnMs", "静默告警阈值（ms）", "多久没事件包就警告", "number", { min: 60000 }),
         F("snowluma.allowLaunch", "允许插件打开 SnowLuma", "默认关；开启后一键启动会弹出 SnowLuma 窗口，仍需你扫码", "switch"),
-        F("snowluma.launcherPath", "SnowLuma 安装目录", "例如 D:\\Tools\\SnowLuma2；用于找 app\\launcher.bat"),
+        F("snowluma.launcherPath", "SnowLuma 安装目录", "例如 D:\\Tools\\SnowLuma2；用于找 app\\launcher.bat", "text", { browse: "dir" }),
         F("snowluma.launchScript", "启动脚本（可选）", "留空自动找 安装目录\\app\\launcher.bat", "text", { wide: true }),
         F("snowluma.homeDir", "SnowLuma home", "可留空"),
       ]},
@@ -3256,6 +3289,7 @@ window.__ModuleLoader__.load({
             "默认在 ~/.dsh/surfcore/state/voice-packs；磁盘紧张或用户目录只读时改到这里。改完要重启桥接，已装的包请手动移动过去。"),
           h("div", { style: { display: "flex", gap: "8px", marginTop: "8px", flexWrap: "wrap" } },
             h("input", { className: "qbw-input", value: dirInput, placeholder: packsDir || "D:/voice-packs", style: { flex: "1 1 320px" }, onChange: (e) => setDirInput(e.target.value) }),
+            h(Browse, { mode: "dir", title: "选择语音包安装目录", onPick: (v) => setDirInput(v) }),
             h(Btn, { kind: "qbw-btn2", onClick: async () => {
               const next = String(dirInput || "").trim();
               if (!next) { toast("✗ 目录不能为空"); return; }
@@ -4339,11 +4373,14 @@ window.__ModuleLoader__.load({
           h("h4", null, "安装设置"),
           h("div", { className: "qbw-hint", style: { margin: "4px 0 8px" } }, "安装包：zip 的本地路径或 http(s) 链接；Electron：本机 electron.exe 的完整路径（安装包不带运行时）。"),
           h("div", { className: "qbw-row" }, h("span", { className: "qbw-label" }, "安装包地址"),
-            h("input", { className: "qbw-input", value: form.source, placeholder: "D:/tools/pet-pack.zip 或 https://…", onChange: (e) => setForm((f) => ({ ...f, source: e.target.value })) })),
+            h("input", { className: "qbw-input", value: form.source, placeholder: "D:/tools/pet-pack.zip 或 https://…", onChange: (e) => setForm((f) => ({ ...f, source: e.target.value })) }),
+            h(Browse, { mode: "file", title: "选择安装包 zip", onPick: (v) => setForm((f) => ({ ...f, source: v })) })),
           h("div", { className: "qbw-row" }, h("span", { className: "qbw-label" }, "Electron 路径"),
-            h("input", { className: "qbw-input", value: form.electronPath, placeholder: "D:/tools/electron/electron.exe", onChange: (e) => setForm((f) => ({ ...f, electronPath: e.target.value })) })),
+            h("input", { className: "qbw-input", value: form.electronPath, placeholder: "D:/tools/electron/electron.exe", onChange: (e) => setForm((f) => ({ ...f, electronPath: e.target.value })) }),
+            h(Browse, { mode: "file", title: "选择 electron.exe", onPick: (v) => setForm((f) => ({ ...f, electronPath: v })) })),
           h("div", { className: "qbw-row" }, h("span", { className: "qbw-label" }, "安装目录（可选）"),
-            h("input", { className: "qbw-input", value: form.appDir, placeholder: "留空 = ~/.dsh/surfcore/pet/app", onChange: (e) => setForm((f) => ({ ...f, appDir: e.target.value })) })),
+            h("input", { className: "qbw-input", value: form.appDir, placeholder: "留空 = ~/.dsh/surfcore/pet/app", onChange: (e) => setForm((f) => ({ ...f, appDir: e.target.value })) }),
+            h(Browse, { mode: "dir", title: "选择桌宠安装目录", onPick: (v) => setForm((f) => ({ ...f, appDir: v })) })),
           h("div", { className: "qbw-hint", style: { marginTop: "4px" } }, "沙箱 / 只读用户目录的环境里，把安装目录指到可写位置（例如工作区内）。"),
           h("div", { className: "qbw-hint", style: { marginTop: "6px" } },
             `官方最新包：${st?.defaults?.zipUrl || "https://github.com/Mieksido/surfpet/releases/latest/download/pet-pack.zip"}`),
@@ -4442,6 +4479,8 @@ window.__ModuleLoader__.load({
         setToast(message);
         setTimeout(() => setToast(""), 4000);
       };
+      // 让深层组件（如泛用 Field 的「浏览…」）也能弹提示，而不是静默失败。
+      useEffect(() => { window.__surfcoreToast = notify; return () => { delete window.__surfcoreToast; }; }, []);
       const applyBudget = (r) => {
         const previousLimits = budgetRef.current?.limits;
         budgetRef.current = r;

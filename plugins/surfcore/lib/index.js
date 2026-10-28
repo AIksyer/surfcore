@@ -1868,6 +1868,35 @@ export function apply(ctx) {
   // 桌宠：安装 / 卸载 / 启动 / 停止 / 状态（本机文件，不经过桥接）
   let electronJob = null;
 
+  // 原生「浏览目录 / 选择文件」——浏览器拿不到绝对路径，只能由宿主进程弹 Windows 对话框。
+  // 仅 Windows 且 DSH 跑在本机时有意义；其它情况返回可读错误，前端提示手动填。
+  async function handleBrowse(req, res, url) {
+    const mode = url.searchParams.get('mode') === 'file' ? 'file' : 'dir';
+    const title = url.searchParams.get('title') || (mode === 'file' ? '选择文件' : '选择目录');
+    if (process.platform !== 'win32') {
+      json(res, 200, { ok: false, error: '只有 Windows 支持原生选择框，请手动填路径' });
+      return;
+    }
+    const ps = mode === 'file'
+      ? `Add-Type -AssemblyName System.Windows.Forms;
+$d = New-Object System.Windows.Forms.OpenFileDialog;
+$d.Title = ${JSON.stringify(title)};
+$d.Filter = '可执行文件 (*.exe)|*.exe|所有文件 (*.*)|*.*';
+if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.FileName }`
+      : `Add-Type -AssemblyName System.Windows.Forms;
+$d = New-Object System.Windows.Forms.FolderBrowserDialog;
+$d.Description = ${JSON.stringify(title)};
+$d.ShowNewFolderButton = $true;
+if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.SelectedPath }`;
+    const child = execFile('powershell.exe', ['-STA', '-NoProfile', '-Command', ps], { windowsHide: true, timeout: 180_000 }, (error, stdout) => {
+      const picked = String(stdout || '').trim().split(String.fromCharCode(10)).pop().trim();
+      if (error && !picked) json(res, 200, { ok: false, error: `选择框打不开：${String(error.message || error).slice(0, 160)}` });
+      else if (!picked) json(res, 200, { ok: false, cancelled: true, error: '已取消' });
+      else json(res, 200, { ok: true, path: picked });
+    });
+    child.on('error', () => json(res, 200, { ok: false, error: '无法启动 PowerShell（可能不在本机桌面）' }));
+  }
+
   async function handlePet(req, res, url) {
     const suffix = url.pathname.slice(`${API_PREFIX}/pet`.length) || '/status';
     const method = String(req.method || 'GET').toUpperCase();
@@ -2634,6 +2663,7 @@ export function apply(ctx) {
     if (pathname === `${API_PREFIX}/updates`) { await handleUpdates(req, res); return; }
     if (pathname.startsWith(`${API_PREFIX}/bili/`)) { await handleBili(req, res, url); return; }
     if (pathname === `${API_PREFIX}/logs`) { handleLogs(res, url); return; }
+    if (pathname === `${API_PREFIX}/browse`) { await handleBrowse(req, res, url); return; }
     if (pathname === `${API_PREFIX}/privacy/explain`) {
       const body = req.method === 'POST' ? JSON.parse(await readBody(req) || '{}') : { text: url.searchParams.get('text') ?? '' };
       json(res, 200, { ok: true, ...explainText(String(body.text ?? '')) });
