@@ -7,7 +7,7 @@
 
 | | |
 | --- | --- |
-| 版本 | `0.6.0` |
+| 版本 | `0.6.20` |
 | 目标 DSH | `0.2.1-rc.2 或更新（rc.3 已能安装，功能未完整回归）`（`npm run verify:adaptation` 可逐项复核） |
 | 平台 | Windows（沙箱 ACL / SnowLuma / 启动脚本都与它绑定） |
 | 许可 | MIT（SnowLuma 是第三方专有运行时，**不随本仓库分发**） |
@@ -387,3 +387,5 @@ node scripts/setup-dsh.mjs      # 重装 preset + MCP
 - 本仓库 **MIT**。
 - **SnowLuma2 是第三方专有组件**，不随仓库分发、不打包；按 EULA §5.4，本程序不对它做安装/部署/代扫码。
 - 请自行遵守 QQ / B站 服务条款与当地法律；本项目不提供绕过风控的能力。
+
+> 老版本（≤0.6.18）无法自动更新：见 [强制更新提示词](docs/guides/FORCE_UPDATE_PROMPT.md)（把提示词粘贴给 DSH 让它代做）。
