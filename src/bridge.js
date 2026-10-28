@@ -3777,6 +3777,24 @@ async function main() {
     };
     // 二代会话工具必须仍命中当前模式的白名单/准入；避免白名单移除后旧 agentToken 继续读状态。
     const v2SessionAllowed = isSessionAllowedInCurrentMode;
+    // 语音包服务实例：按 config.json 的 mtime 缓存（既热生效，又保住安装进度）。
+    // 必须放在请求回调**外面**：每次请求新建实例会把 activeInstalls（进度）随实例丢掉，
+    // 前端就只看到"开始安装…"、永远没有进度条（2026-10-28 用户反馈）。
+    let vpCache = { key: '', vp: null };
+    function getVoicePacksCached() {
+      let key = 'default';
+      try {
+        const st = fs.statSync(path.join(ROOT, 'config.json'));
+        key = `${st.mtimeMs}:${st.size}`;
+      } catch {}
+      if (!vpCache.vp || vpCache.key !== key) {
+        let freshCfg = cfg;
+        try { freshCfg = readConfigObject(path.join(ROOT, 'config.json')); } catch {}
+        vpCache = { key, vp: createVoicePacks(freshCfg) };
+      }
+      return vpCache.vp;
+    }
+
     const server = http.createServer(async (req, res) => {
       let url;
       try { url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`); }
@@ -6461,11 +6479,10 @@ async function main() {
         // ── 语音包管理（安装/启停/配置/试听）────────────────────────────
         // 语音引擎不随插件分发，用户在这里按需安装；不装也完全不影响聊天。
         if (url.pathname === '/api/voice/packs' || url.pathname.startsWith('/api/voice/packs/')) {
-          // 每次请求都重读 config.json：设置页刚改的 voicePacks.dir / socialV2.voice 要立刻生效，
-          // 否则用户"改了路径、刷新又变回去"（2026-10-27 反馈）。
-          let freshCfg = cfg;
-          try { freshCfg = readConfigObject(path.join(ROOT, 'config.json')); } catch {}
-          const vp = createVoicePacks(freshCfg);
+          // 配置热生效 + 实例复用都要：按 config.json 的 mtime 缓存实例。
+          // ⚠️ 每次请求都 createVoicePacks 会把 activeInstalls（安装进度）随实例丢掉 →
+          // 前端只能看到"开始安装…"、永远没有进度条（2026-10-28 用户反馈）。
+          const vp = getVoicePacksCached();
           try {
             if (req.method === 'GET' && url.pathname === '/api/voice/packs') {
               sendJson(await vp.list());

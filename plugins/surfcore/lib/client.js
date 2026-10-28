@@ -3274,12 +3274,13 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           h("ul", { style: { margin: 0, paddingLeft: "18px", opacity: 0.7 } }, ((p.about && p.about.cons) || []).map((x) => h("li", { key: x }, x)))),
         p.about && p.about.billing ? h("div", { style: { fontSize: "12px", marginTop: "6px", opacity: 0.75 } },
           p.about.billing, h("br"), p.about.disclaimer || "") : null,
-        p.install
+        (p.install || busyId === p.id)
           ? h(ProgressBar, {
-            pct: p.install.progress,
-            phase: p.install.phase,
-            err: p.install.error,
-            indeterminate: /依赖|模型/.test(String(p.install.phase || '')) && Number(p.install.progress || 0) >= 99,
+            pct: p.install?.progress ?? 0,
+            phase: p.install?.phase || "正在启动安装…",
+            err: p.install?.error,
+            // 还没拿到后端进度时先给不确定态，至少让用户看到"在动"
+            indeterminate: !p.install || (/依赖|模型/.test(String(p.install.phase || '')) && Number(p.install.progress || 0) >= 99),
           })
           : null,
         p.installed && p.dir ? h("div", { style: { fontSize: "12px", marginTop: "4px", opacity: 0.7 } }, "路径：", h("code", null, p.dir)) : null,

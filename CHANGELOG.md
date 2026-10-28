@@ -4,6 +4,18 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.6.20] - 2026-10-28
+
+### 修复
+
+- **语音包安装没有进度条（只显示「开始安装…」）**：0.6.5 为让配置热生效，把
+  `/api/voice/*` 改成每个请求都 `createVoicePacks()`；而安装进度存在实例内部的
+  `activeInstalls` 里 → POST 的实例随请求结束销毁，后续 GET 拿到新实例，`install` 永远 null。
+  现在实例按 `config.json` 的 mtime 缓存、声明在请求回调外（既热生效又保住进度）；
+  前端在还没拿到后端进度时先显示不确定态进度条。
+
+> 调查记录：[语音安装没有进度条](docs/cases/2026-10-28-voice-progress-lost.md)
+
 ## [0.6.19] - 2026-10-28
 
 ### 修复
