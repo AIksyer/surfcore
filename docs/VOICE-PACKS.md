@@ -171,3 +171,15 @@ cloud_resource = "seed-icl-2.0"   # 不能改，换别的会 403
 2. **窗口 5 分钟**：主人 5 分钟没动静，任何人都触发不了
 3. **频率上限**：`maxPerMinute` / `maxPerHour`（默认 2 / 10），是最后一道闸
 控制台手动「试发」走的是操作者通道，不受这条限制。
+
+## 断点续传与"保留资产"（2026-10-28）
+
+- 模型/运行库由包内 `scripts/fetch-models.mjs` 下载，**支持断点续传**：
+  先写 `<name>.part`，中断后保留；下次 `curl -C -` 续传；完成后校验 sha256，
+  不匹配会删掉重下一次（只重试一次，避免死循环）。
+- 重装同一个包时，SurfCore 保留 `models/ vendor/ voices/ voicepack/ logs/ cache/ .venv* config.toml`，
+  只替换代码 —— 否则 `.part` 会被清掉，续传就没意义（`clearPackKeepingAssets()`）。
+- 装完强制校验：本地包必须有 `models/` + `vendor/GPT-SoVITS`，云端包必须有 `models/`；
+  缺任何一个判失败，不再显示"安装完成"。
+- 手动验证续传：预置 1MB 的 `.part`，再跑 `node scripts/fetch-models.mjs`，
+  应打印"续传"且最终 sha256 通过（2026-10-28 已实测：1.0MB + 续传 → 2,551,407 字节校验通过）。

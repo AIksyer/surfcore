@@ -4,6 +4,21 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.6.14] - 2026-10-28
+
+### 新增
+
+- **语音包下载支持断点续传**（`scripts/fetch-models.mjs`）：先写 `<name>.part`，中断后保留，
+  下次 `curl -C -` 续传；完成后校验 sha256，不匹配删掉重下一次（只重试一次）。
+  1.84GB 的 vendor 在国内经常断，以前中断就得从头来。
+- **重装保留资产**：重装同一个包时只替换代码，保留
+  `models/ vendor/ voices/ voicepack/ logs/ cache/ .venv* config.toml` —— 否则 `.part` 会被一起删掉。
+
+### 验证
+
+- 实测续传：预置 1.0MB `.part` → 打印「续传」→ 最终 2,551,407 字节、sha256 校验通过并解压；
+- `npm run test:audit` 77/77。
+
 ## [0.6.13] - 2026-10-28
 
 ### 修复

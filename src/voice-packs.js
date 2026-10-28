@@ -282,7 +282,34 @@ export function createVoicePacks(cfg) {
     };
   }
 
-  async function install(id, { force = false } = {}) {
+  /** 重装时保留这些（模型/环境/配置）：否则断点续传的 .part 也会被一起删掉。 */
+const PACK_KEEP = ['models', 'vendor', 'voices', 'voicepack', 'logs', 'cache', '.venv', '.venv-gsv', 'config.toml'];
+
+/** 清掉代码，但把模型/环境/配置暂时挪出去再挪回来。 */
+async function clearPackKeepingAssets(dir) {
+  if (!(await exists(dir))) return;
+  const keepDir = `${dir}.keep-${Date.now()}`;
+  await fsp.mkdir(keepDir, { recursive: true });
+  const moved = [];
+  for (const name of PACK_KEEP) {
+    const from = path.join(dir, name);
+    if (!(await exists(from))) continue;
+    try {
+      await fsp.rename(from, path.join(keepDir, name));
+      moved.push(name);
+    } catch {}
+  }
+  await fsp.rm(dir, { recursive: true, force: true });
+  await fsp.mkdir(dir, { recursive: true });
+  for (const name of moved) {
+    try {
+      await fsp.rename(path.join(keepDir, name), path.join(dir, name));
+    } catch {}
+  }
+  await fsp.rm(keepDir, { recursive: true, force: true });
+}
+
+async function install(id, { force = false } = {}) {
     const m = manifests(cfg).find((x) => x.id === id);
     if (!m) throw new Error(`未知语音包：${id}`);
     // 上一次已经结束（完成/失败）的安装记录要清掉，否则会永远卡在"正在安装中"，
@@ -300,7 +327,8 @@ export function createVoicePacks(cfg) {
     // 异步跑，接口立刻返回，前端轮询 status 看进度
     (async () => {
       try {
-        await fsp.rm(dir, { recursive: true, force: true });
+        // 保留 models/vendor/.venv/config.toml：断点续传的 .part 在这里，不能一起删。
+        await clearPackKeepingAssets(dir);
         // 安装源：本地开发目录 / 本地 zip / http(s)。开发目录在用户机器上不存在，
         // 这时退到 GitHub 仓库的 archive zip（代码很小），模型由 postInstall 单独拉。
         let src = String(m.url || '');
