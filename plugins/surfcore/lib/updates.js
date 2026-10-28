@@ -793,6 +793,8 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(pendingFile, `${JSON.stringify(payload, null, 2)}
 `, 'utf8');
+    // 测试里不想真的起"等宿主退出"的进程时，设 SURFCORE_UPDATE_NO_SPAWN=1
+    if (process.env.SURFCORE_UPDATE_NO_SPAWN === '1') return { pid: null, pendingFile, spawned: false };
     const helper = path.join(REPO_ROOT, 'scripts', 'apply-update.mjs');
     const child = spawn(process.execPath, [helper, '--pending', pendingFile], {
       detached: true,

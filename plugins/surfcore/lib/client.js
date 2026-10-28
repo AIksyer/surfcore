@@ -4343,7 +4343,7 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
       const [st, setSt] = useState(null);
       const [busy, setBusy] = useState("");
       const [err, setErr] = useState("");
-      const [form, setForm] = useState({ source: "", electronPath: "", appDir: "" });
+      const [form, setForm] = useState({ source: "", electronPath: "", appDir: "", mirror: "" });
       const chatCfg = unified?.pet?.chat && typeof unified.pet.chat === "object" ? unified.pet.chat : {};
       const setChat = (key, value) => setUnified?.(["pet", "chat", key], value);
 
@@ -4355,6 +4355,7 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
             source: (r.source && r.source.trim()) ? r.source : (r.installed ? f.source : (r.defaults?.zipUrl || f.source)),
             electronPath: (r.electronPath && r.electronPath.trim()) ? r.electronPath : (r.electronDetected || f.electronPath),
             appDir: r.appDir ?? f.appDir,
+            mirror: r.mirror ?? f.mirror ?? "",
           }));
           setErr("");
         } catch (e) { setErr(e.message); }
@@ -4430,6 +4431,18 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
               await read();
             } }, busy === "install" ? "安装中…" : "安装") : null,
             !st || !st.installed ? h("span", { style: { fontSize: "12px", opacity: 0.7 } }, form.source.trim() ? "" : "← 先在下方「安装设置」填安装包地址，按钮才可点") : null,
+            err ? h("div", { className: "qbw-err", style: { width: "100%", marginTop: "6px" } }, err) : null,
+            err ? h("div", { style: { display: "flex", gap: "8px", marginTop: "6px", flexWrap: "wrap" } },
+              h(Btn, { kind: "qbw-btn2", onClick: () => setForm((f) => ({ ...f, source: st?.defaults?.zipUrl || "https://github.com/Mieksido/surfpet/releases/latest/download/pet-pack.zip" })) }, "用官方最新版"),
+              h(Btn, { kind: "qbw-btn2", onClick: async () => {
+                setBusy("clean"); setErr("");
+                try {
+                  const r = await api("/pet/clean", { method: "POST", body: {} });
+                  if (r.ok === false) { setErr(r.error || "清理失败"); return; }
+                  if (toast) toast("✓ 已清理安装目录，可以重新安装");
+                  await read();
+                } catch (e) { setErr(e.message); } finally { setBusy(""); }
+              } }, busy === "clean" ? "清理中…" : "清理残留后重试")) : null,
             st && st.installed && !st.running ? h(Btn, { onClick: () => act("start"), disabled: !!busy }, "启动") : null,
             st && st.installed && st.running ? h(Btn, { kind: "qbw-btn2", onClick: () => act("stop"), disabled: !!busy }, "停止") : null,
             st && st.installed ? h(Btn, { kind: "qbw-btn2", onClick: () => act("remove"), disabled: !!busy }, "卸载") : null)),
@@ -4456,6 +4469,17 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
             h(Btn, { kind: "qbw-btn2", disabled: busy === "electron-install-gh", onClick: () => act("electron-install", { source: "github" }, "electron-install-gh") },
               busy === "electron-install-gh" ? "从 GitHub 下载中…" : "GitHub 官方源"),
             h(Btn, { kind: "qbw-btn2", disabled: busy === "config", onClick: () => act("config", form) }, busy === "config" ? "保存中…" : "保存设置")),
+          h("div", { className: "qbw-row" }, h("span", { className: "qbw-label" }, "下载链路"),
+            h("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap" } },
+              ...[
+                { id: "", label: "官方（GitHub）" },
+                { id: "https://gh-proxy.com", label: "镜像 · gh-proxy" },
+                { id: "https://ghproxy.net", label: "镜像 · ghproxy" },
+              ].map((opt) => h(Btn, {
+                key: opt.id || "official",
+                kind: (form.mirror || "") === opt.id ? "qbw-btn" : "qbw-btn2",
+                onClick: () => act("config", { ...form, mirror: opt.id }),
+              }, ((form.mirror || "") === opt.id ? "● " : "") + opt.label)))),
           h("div", { className: "qbw-hint", style: { marginTop: "4px" } },
             st?.electronDetected ? `已检测到 Electron：${st.electronDetected}` : "没检测到 Electron：点「下载 Electron」自动装到 ~/.dsh/surfcore/pet/runtime（约 125MB）")),
         // ── 桌宠对话：人设 / 记忆 / 模型都来自当前角色，这里只管长短与开关 ──

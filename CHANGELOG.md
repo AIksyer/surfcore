@@ -4,6 +4,21 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.6.17] - 2026-10-28
+
+### 修复
+
+- **桌宠点「安装」一直无效、也没报错**：三处叠加
+  ① 安装器只认根目录 `package.json`，GitHub 源码 zip 多一层 `<repo>-main/`；
+  ② 失败残留目录 + 没写安装标记 → 第二次被 `checkAppDir` 的"目录非空"拦住；
+  ③ 报错渲染在「运行状态」卡片，用户在下面的「安装设置」点按钮看不到。
+  现在：**单层目录自动拍平**；识别源码包并明确提示"这是 SurfCore 的源码包，不是桌宠安装包"；
+  失败自动清理本次残留；报错挪到按钮旁并给「用官方最新版」「清理残留后重试」；
+  桌宠 zip 下载也支持下载链路（官方 / gh-proxy / ghproxy）。
+- `test-updates.mjs` 的旧断言同步到 0.6.12 的新行为（git 更新改为退出后应用）。
+
+> 调查记录：[桌宠安装无效](docs/cases/2026-10-28-pet-install-silent-fail.md)
+
 ## [0.6.16] - 2026-10-28
 
 ### 新增

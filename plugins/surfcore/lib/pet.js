@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 
-const EMPTY_CONFIG = { source: '', electronPath: '', appDir: '', installedAt: null };
+const EMPTY_CONFIG = { source: '', electronPath: '', appDir: '', mirror: '', installedAt: null };
 
 /** 安装成功后写进安装目录的标记文件：证明"这个目录是本程序装的"，删除前必须有它。 */
 export const PET_MARKER = '.surfcore-pet.json';
@@ -207,6 +207,41 @@ export async function installElectronRuntime({ stateDir, log = () => {}, version
   throw new Error(`下载 Electron 失败（镜像和官方源都试过了）：${String(lastError?.message ?? lastError ?? '未知错误')}`);
 }
 
+
+/** 单层目录拍平：GitHub 源码 zip 解压后是 `<repo>-main/…`，把里面的内容提上来。 */
+export function flattenSingleTopDir(dest) {
+  try {
+    const entries = fs.readdirSync(dest, { withFileTypes: true });
+    const dirs = entries.filter((e) => e.isDirectory());
+    const files = entries.filter((e) => !e.isDirectory());
+    if (dirs.length !== 1 || files.length > 0) return false;
+    if (fs.existsSync(path.join(dest, 'package.json'))) return false;
+    const inner = path.join(dest, dirs[0].name);
+    if (!fs.existsSync(path.join(inner, 'package.json'))) return false;
+    for (const name of fs.readdirSync(inner)) {
+      fs.renameSync(path.join(inner, name), path.join(dest, name));
+    }
+    fs.rmSync(inner, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 识别"下错包"：SurfCore 源码 zip / 任意非桌宠仓库。 */
+export function looksLikeWrongPackage(dest) {
+  const has = (rel) => fs.existsSync(path.join(dest, rel));
+  if (has('plugins/surfcore') || has('dsh/agent-presets')) return 'surfcore';
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(dest, 'package.json'), 'utf8'));
+    const name = String(pkg?.name ?? '').toLowerCase();
+    if (name === 'surfcore' || name.includes('surfcore')) return 'surfcore';
+    if (name && !name.includes('pet') && !name.includes('feiyu')) return 'other';
+  } catch {}
+  if (has('src') && has('docs') && !has('skins')) return 'other';
+  return '';
+}
+
 export function createPetService({ stateDir, pluginLog = () => {}, subprocess = null, getSubprocess = null }) {
   const root = path.join(stateDir, 'pet');
   const defaultAppDir = path.join(root, 'app');
@@ -361,6 +396,7 @@ export function createPetService({ stateDir, pluginLog = () => {}, subprocess = 
       appDir: String(readConfig().appDir || ''),
       source: cfg.source || '',
       electronPath: cfg.electronPath || '',
+      mirror: cfg.mirror || '',
       installedAt: cfg.installedAt || null,
       sizeBytes: pkg ? dirSize(resolveAppDir()) : 0,
       version: pkg?.version || null,
@@ -375,15 +411,35 @@ export function createPetService({ stateDir, pluginLog = () => {}, subprocess = 
     const next = {};
     if (typeof patch.source === 'string') next.source = patch.source.trim();
     if (typeof patch.electronPath === 'string') next.electronPath = patch.electronPath.trim();
+    if (typeof patch.mirror === 'string') next.mirror = patch.mirror.trim();
     if (typeof patch.appDir === 'string') next.appDir = patch.appDir.trim();
     writeConfig(next);
     return status();
   }
 
+  function mirrorUrl(url) {
+    const cfgMirror = String(readConfig().mirror || '').trim().replace(/\/+$/, '');
+    if (!cfgMirror || !/^https?:\/\//i.test(url)) return url;
+    return `${cfgMirror}/${url}`;
+  }
+
+  /** 清理安装目录（失败残留 / 手动重来）：只在非运行、路径安全时允许。 */
+  async function cleanAppDir() {
+    if (running()) return { ok: false, error: '桌宠还在运行，先停止' };
+    const abs = resolveAppDir();
+    const check = checkAppDir(abs, { protectedPaths: protectedPaths(), allowNonEmpty: true });
+    if (!check.ok) return { ok: false, error: check.reason };
+    try { fs.rmSync(abs, { recursive: true, force: true }); } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) };
+    }
+    pluginLog('pet: 已清理安装目录', abs);
+    return { ok: true, ...status() };
+  }
+
   async function download(url) {
     ensureDirs();
     const target = path.join(tmpDir, `pet-pack-${Date.now()}.zip`);
-    const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(20 * 60_000) });
+    const res = await fetch(mirrorUrl(url), { redirect: 'follow', signal: AbortSignal.timeout(20 * 60_000) });
     if (!res.ok) throw new Error(`下载失败 HTTP ${res.status}`);
     const total = Number(res.headers.get('content-length') || 0);
     let got = 0;
@@ -453,7 +509,10 @@ export function createPetService({ stateDir, pluginLog = () => {}, subprocess = 
         }
       }
       setJob({ phase: '解压中', progress: 85 });
-      await unzip(archive, resolveAppDir());
+      const appDir = resolveAppDir();
+      await unzip(archive, appDir);
+      // GitHub 源码 zip 会多一层 <repo>-main/：自动提上来（用户以为自己下的是安装包）
+      if (flattenSingleTopDir(appDir)) pluginLog('pet: 已拍平单层目录（源码 zip 风格）');
       // 卸载时备份过的 data/ 放回来（新装才有意义；更新走 updateFromZip 自己的逻辑）。
       try {
         const keepData = path.join(stateDir, 'pet-data-keep', 'data');
@@ -464,7 +523,21 @@ export function createPetService({ stateDir, pluginLog = () => {}, subprocess = 
         }
       } catch {}
       try { fs.rmSync(path.join(resolveAppDir(), 'run.pid'), { force: true }); } catch {}
-      if (!appPackage()) return { ok: false, error: '解压后没有 package.json，安装包可能不完整' };
+      const wrong = looksLikeWrongPackage(appDir);
+      if (wrong) {
+        // 装错了包：清掉本次解压出来的东西，别让下一次被"目录非空"拦住
+        try { fs.rmSync(appDir, { recursive: true, force: true }); } catch {}
+        return {
+          ok: false,
+          error: wrong === 'surfcore'
+            ? '这是 SurfCore 的源码包，不是桌宠安装包。桌宠请用 pet-pack.zip（点「用官方最新版」）'
+            : '这个 zip 里没有桌宠程序（不是 pet-pack.zip）。点「用官方最新版」重新下载',
+        };
+      }
+      if (!appPackage()) {
+        try { fs.rmSync(appDir, { recursive: true, force: true }); } catch {}
+        return { ok: false, error: '解压后没有 package.json，安装包可能不完整；点「用官方最新版」重下' };
+      }
       writeMarker({ source: String(archive) });
       writeConfig({ installedAt: new Date().toISOString() });
       pluginLog('pet: installed from', archive);
@@ -653,5 +726,5 @@ export function createPetService({ stateDir, pluginLog = () => {}, subprocess = 
     }
   }
 
-  return { status, configure, install: startInstall, startInstall, updateFromZip, remove, start, stop, running };
+  return { status, configure, install: startInstall, startInstall, updateFromZip, remove, start, stop, running, cleanAppDir };
 }

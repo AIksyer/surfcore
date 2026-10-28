@@ -1966,6 +1966,7 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output 
       }
       if (suffix === '/install') { json(res, 200, await petService.install()); return; }
       if (suffix === '/remove') { json(res, 200, await petService.remove()); return; }
+      if (suffix === '/clean') { json(res, 200, await petService.cleanAppDir()); return; }
       if (suffix === '/start') { json(res, 200, await petService.start()); return; }
       if (suffix === '/stop') { json(res, 200, await petService.stop()); return; }
       if (suffix === '/chat-test') {

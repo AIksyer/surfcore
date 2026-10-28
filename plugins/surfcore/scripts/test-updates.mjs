@@ -129,11 +129,14 @@ try {
       blockedReason: () => '',
     });
     await svc.check({ fetch: true });
+    const headBefore = git(['rev-parse', 'HEAD'], work);
+    process.env.SURFCORE_UPDATE_NO_SPAWN = '1'; // 测试里不起"等宿主退出"的进程
     const result = await svc.apply(['core']);
+    delete process.env.SURFCORE_UPDATE_NO_SPAWN;
     ok(result.ok === true && result.updated === 1, `更新成功（updated=${result.updated}）`);
-    const localHead = git(['rev-parse', 'HEAD'], work);
-    const remoteHead = git(['rev-parse', 'origin/main'], work);
-    ok(localHead === remoteHead, '本地 HEAD 与远端一致（快进完成）');
+    // 2026-10-28 起：git 更新也必须等宿主退出后再 merge（进程内 merge 会动正在加载的文件）
+    ok(git(['rev-parse', 'HEAD'], work) === headBefore, '宿主进程内不改工作区（更新排队到退出后）');
+    ok(result.results[0]?.staged === true, 'git 更新标记为 staged（退出后应用）');
     ok(result.restartRequired === true, '提示需要重启');
 
     // blocked 的组件不动
