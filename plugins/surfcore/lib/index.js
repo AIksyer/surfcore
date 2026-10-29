@@ -88,6 +88,7 @@ import {
 import { fishGuardStateSummary } from '../tools/lib/fish-guard.mjs';
 import { summarizeQqFishGuard } from './qq-fish-guard.js';
 import { applySessionPermission } from './scheduler.js';
+import { describeTimeZone, normalizeTimeZone } from '../../../src/timezone.js';
 
 // 版本号只有一个来源：仓库根 package.json（与 plugins/surfcore/package.json 必须一致，
 // 由 scripts/version.mjs check 与 test-version.mjs 把关）。
@@ -683,6 +684,7 @@ export function apply(ctx) {
         detected: findSnowLumaInstall().ok,
         diagnosis: snowDiag,
       },
+      timezone: describeTimeZone(),
       mode: {
         local: mode.localMode,
         dsh: dshMode,
@@ -725,6 +727,15 @@ export function apply(ctx) {
     // 合体层 admin 是唯一真相；旧格式（qq.ownerQQ / bili.owner）是投影。
     // 合并逻辑放在 src/admin-identity.js 的 projectAdminSave（纯函数，有单测），
     // 这里只负责把结果写回三份文件，避免「只改了一边」。
+    // 时区先校验：写错了要当场告诉用户，不能存一个无效值再静默回退系统时区（见 docs/guides/TIMEZONE.md）。
+    if (body.qq && typeof body.qq === 'object' && body.qq.timezone !== undefined) {
+      const verdict = normalizeTimeZone(body.qq.timezone);
+      if (!verdict.ok) {
+        json(res, 400, { ok: false, code: 'invalid_timezone', error: verdict.error, hint: verdict.hint });
+        return;
+      }
+      body.qq.timezone = verdict.zone;
+    }
     const currentQq = readQqConfig().config;
     const currentBili = readBiliConfig().config;
     const currentUnifiedState = readUnified();
@@ -747,7 +758,9 @@ export function apply(ctx) {
       result.saved.qq = true;
       result.qq = saved.config;
       result.qqBackup = saved.backup;
-      result.warnings.push('QQ 配置已保存；桥接只在启动时读 config.json，需要「重启桥接」才会生效。');
+      result.warnings.push(body.qq.timezone !== undefined && Object.keys(body.qq).length === 1
+        ? '时区已保存：插件立即生效，桥接约 1 分钟内自动跟上（无需重启）。'
+        : 'QQ 配置已保存；桥接只在启动时读 config.json，需要「重启桥接」才会生效。');
     }
     if (body.bili && typeof body.bili === 'object') {
       const saved = saveBiliConfig(body.bili);
