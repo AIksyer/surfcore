@@ -159,7 +159,10 @@ async function agentApi(path, init = {}) {
   let body = null;
   try { body = await res.json(); } catch { body = null; }
   if (!res.ok) {
-    throw new Error(errorText(body?.error, `桥接 API HTTP ${res.status}`));
+    const err = new Error(errorText(body?.error, `桥接 API HTTP ${res.status}`) + (body?.hint ? `；建议：${body.hint}` : ''));
+    if (body?.code) err.code = String(body.code);
+    if (body?.hint) err.hint = String(body.hint);
+    throw err;
   }
   // 桥接的部分端点会用 200 + {ok:false,error} 表达业务失败（例如发送被审计拦截）。
   // 不检查 body.ok 会把「被拦截」当成「发送成功」上报给模型 —— 模型据此认为消息已发出，
@@ -1189,10 +1192,13 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.collectStic
   );
 }
 
-if (cfg.socialV2?.voice?.enabled !== false && cfg.socialV2?.tools?.sendVoice !== false) {
+// 2026-10-29：**不在注册期按配置过滤**。工具表是 MCP 进程启动时的快照，
+// 过滤会导致"改了开关但没重启 → 模型手里根本没有这个工具"，用户只看到"她不会说话"。
+// 现在工具始终注册；是否真的允许发由桥接在调用时判定，并返回 code+hint 说明卡在哪一关。
+if (true) {
   server.tool(
     'qq_send_voice',
-    '在指定会话发一条 QQ 语音。两种来源二选一：① text：把这句话用本地语音引擎现场合成后发出去（最常用，像"说一句"而不是"转发一段录音"）；② voice：把语音库里准备好的音频当语音条发出去（传 qq_list_voices 返回的 name，可带子目录/可省略扩展名）。注意：① text 受字数上限（默认 120 字）与合成耗时约束，太长就分次说或改打字；② 受频率上限约束（见 qq_list_voices 的 limits），超限会被拒绝；③ 语音是「开口说话」的强表达，别滥用，闲聊里偶尔发一条即可；④ 返回的 verified=true 表示已经用 get_msg 回读到这条消息的 record 段（语音确实落地了）—— 只有 verified=true 才能对用户说你发了语音；⑤ 返回 502/「语音合成失败」说明本地语音服务没起来，此时**改回打字**，不要重试也不要假装发了；⑥ readback 只对「收到的」语音有意义（QQ 会转写别人的语音），自己发的语音一般拿不到转写文本，默认关闭。',
+    '在指定会话发一条 QQ 语音。两种来源二选一：① text：把这句话用本地语音引擎现场合成后发出去（最常用，像"说一句"而不是"转发一段录音"）；② voice：把语音库里准备好的音频当语音条发出去（传 qq_list_voices 返回的 name，可带子目录/可省略扩展名）。注意：① text 受字数上限（默认 120 字）与合成耗时约束，太长就分次说或改打字；② 受频率上限约束（见 qq_list_voices 的 limits），超限会被拒绝；③ 语音是「开口说话」的强表达，别滥用，闲聊里偶尔发一条即可；④ 返回的 verified=true 表示已经用 get_msg 回读到这条消息的 record 段（语音确实落地了）—— 只有 verified=true 才能对用户说你发了语音；⑤ 返回 502/「语音合成失败」说明本地语音服务没起来，此时**改回打字**，不要重试也不要假装发了；⑥ readback 只对「收到的」语音有意义（QQ 会转写别人的语音），自己发的语音一般拿不到转写文本，默认关闭；⑦ 如果返回 code=VOICE_DISABLED，说明语音总闸/工具开关没开，按返回里的 hint 去设置页开启，别反复重试。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),

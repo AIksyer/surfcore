@@ -88,6 +88,7 @@ import {
 import { fishGuardStateSummary } from '../tools/lib/fish-guard.mjs';
 import { summarizeQqFishGuard } from './qq-fish-guard.js';
 import { applySessionPermission } from './scheduler.js';
+import { fileStamp, isStale } from '../../../src/config-stamps.js';
 
 // 版本号只有一个来源：仓库根 package.json（与 plugins/surfcore/package.json 必须一致，
 // 由 scripts/version.mjs check 与 test-version.mjs 把关）。
@@ -752,10 +753,38 @@ export function apply(ctx) {
   // ── 配置读写 ────────────────────────────────────────────────────────────
   async function handleConfig(req, res) {
     if (req.method === 'GET') {
-      json(res, 200, { ok: true, ...readAll(), paths: pathSummary(), backups: listBackups(20) });
+      json(res, 200, {
+        ok: true, ...readAll(), paths: pathSummary(), backups: listBackups(20),
+        // 保存时回传这些戳：服务端据此判断"加载之后配置有没有被别处改过"
+        stamps: {
+          qq: fileStamp(QQ_CONFIG),
+          bili: fileStamp(BILI_CONFIG),
+          unified: fileStamp(path.join(STATE_DIR, 'config.json')),
+        },
+      });
       return;
     }
     const body = JSON.parse(await readBody(req) || '{}');
+    // 乐观并发：设置页加载后，如果配置被控制台/别的窗口改过，这里拒绝整份回写，
+    // 否则会把别人的修改覆盖掉（2026-10-29：语音开关"自己回弹"）。
+    const baseStamp = body?.baseStamp && typeof body.baseStamp === 'object' ? body.baseStamp : null;
+    const currentStamps = {
+      qq: fileStamp(QQ_CONFIG),
+      bili: fileStamp(BILI_CONFIG),
+      unified: fileStamp(path.join(STATE_DIR, 'config.json')),
+    };
+    if (baseStamp) {
+      const stale = ['qq', 'bili', 'unified'].filter((k) => isStale(baseStamp[k], currentStamps[k]));
+      if (stale.length) {
+        json(res, 409, {
+          ok: false, code: 'CONFIG_STALE',
+          error: `配置已被别处修改（${stale.join(' / ')}），本次保存未执行`,
+          hint: '点「重新读取」拿到最新配置后再改；直接覆盖会丢掉别人的修改',
+          stamps: currentStamps,
+        });
+        return;
+      }
+    }
     const result = { ok: true, saved: {}, warnings: [] };
     // ── 管理员：QQ ⇄ B站 默认是同一个人 ────────────────────────────────────
     // 合体层 admin 是唯一真相；旧格式（qq.ownerQQ / bili.owner）是投影。

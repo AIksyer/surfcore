@@ -140,7 +140,10 @@ console.log('## qq-bridge 语音系统：MCP 工具与开关映射');
   ok(mcp.includes("'qq_send_voice'"), '注册 qq_send_voice');
   ok(mcp.includes("'qq_list_voices'"), '注册 qq_list_voices');
   ok(/qq_send_voice: 'sendVoice'/.test(mcp) && /qq_list_voices: 'sendVoice'/.test(mcp), '两个工具都受 sendVoice 开关控制');
-  ok(/voice\?\.enabled !== false/.test(mcp), '注册期也检查 voice.enabled（关闭时不注册，省 token）');
+  // 2026-10-29 复盘：注册期过滤会让"改了开关没重启"变成"模型手里没有工具"。
+  // 现在工具常注册，是否允许由桥接在调用时判定并返回 code/hint。
+  ok(!/if \(cfg\.socialV2\?\.voice\?\.enabled !== false && cfg\.socialV2\?\.tools\?\.sendVoice !== false\)/.test(mcp),
+    '不再在注册期按 voice.enabled/sendVoice 过滤（工具常注册）');
   const bridge = read('src/bridge.js');
   ok(/sendVoice: 'qq_send_voice \/ qq_list_voices'/.test(bridge), 'qq_get_prompt 的 toolMap 含语音工具');
   ok(/'sendVoice'\]/.test(bridge), 'config API 的 toolFlags 含 sendVoice');

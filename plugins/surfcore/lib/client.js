@@ -5050,6 +5050,8 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
       const [tab, setTab] = useState("overview");
       const [overview, setOverview] = useState(null);
       const [qq, setQq] = useState(null);
+      // 加载时的配置版本戳：保存时回传，防止把别人刚改的配置整份覆盖（2026-10-29）
+      const [configStamps, setConfigStamps] = useState(null);
       const [bili, setBili] = useState(null);
       const [unified, setUnified] = useState(null);
       const [saved, setSaved] = useState("");
@@ -5099,6 +5101,7 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           setQq(r.qq ?? {});
           setBili(r.bili ?? {});
           setUnified(r.unified ?? {});
+          setConfigStamps(r.stamps ?? null);
           setSaved(JSON.stringify({ qq: r.qq ?? {}, bili: r.bili ?? {}, unified: r.unified ?? {} }));
         } catch (e) { setErr(`读取配置失败：${e.message}`); }
       }, []);
@@ -5167,7 +5170,18 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
             applyBudget(b);
             setLimitDraft(b.limits);
           }
-          const r = await api("/config", { method: "POST", body: { qq: normalizedQq, bili, unified: normalizedUnified, restartBridge } });
+          let r;
+          try {
+            r = await api("/config", { method: "POST", body: { qq: normalizedQq, bili, unified: normalizedUnified, restartBridge, baseStamp: configStamps } });
+          } catch (e) {
+            // 409：配置在加载后被别处改过。不要盲目覆盖 —— 提示重新读取。
+            if (/CONFIG_STALE|已被别处修改/.test(String(e.message))) {
+              setErr(`保存被拒绝：${e.message}。请点「重新读取」后再改。`);
+              notify(`⚠️ ${e.message}`);
+              return;
+            }
+            throw e;
+          }
           if (r.qq) setQq(r.qq);
           if (r.bili) setBili(r.bili);
           if (r.unified) setUnified(r.unified);
