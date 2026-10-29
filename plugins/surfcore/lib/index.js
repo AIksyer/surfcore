@@ -72,7 +72,7 @@ import { createPetPurposeService } from './pet-purpose.js';
 import { createPetApiService } from './pet-api.js';
 import { createUpdatesService, resumePendingApply } from './updates.js';
 import {
-  adminFromSources, adminSummary, projectAdminSave,
+  adminFromSources, adminSummary, normalizeAdmin, projectAdminSave,
 } from '../../../src/admin-identity.js';
 import {
   applyMemoryCardAction, compactMemoryCardNow, fullMemoryCardSnapshot, memoryCardIdle, memoryCardSnapshot,
@@ -89,6 +89,7 @@ import { fishGuardStateSummary } from '../tools/lib/fish-guard.mjs';
 import { summarizeQqFishGuard } from './qq-fish-guard.js';
 import { applySessionPermission } from './scheduler.js';
 import { describeTimeZone, normalizeTimeZone } from '../../../src/timezone.js';
+import { fileStamp, isStale } from '../../../src/config-stamps.js';
 
 // 版本号只有一个来源：仓库根 package.json（与 plugins/surfcore/package.json 必须一致，
 // 由 scripts/version.mjs check 与 test-version.mjs 把关）。
@@ -377,6 +378,42 @@ export function apply(ctx) {
     return schedulerStatus;
   }
   startSchedulerNow();
+
+  // 管理员称呼的存量修复：v0.7.2 及以前只把 ownerQQ 投影到 QQ config.json，
+  // displayName/biliName/gentle 留在 unified，桥接独立进程读不到 → 叫“管理员”。
+  // 启动时补一次投影（有变化才写），桥接在跑就重启让它重新读配置。
+  function ensureAdminProjection() {
+    try {
+      const qqState = readQqConfig();
+      const unifiedState = readUnified();
+      const biliState = readBiliConfig();
+      const unifiedAdmin = unifiedState.hasAdmin ? unifiedState.config?.admin : undefined;
+      const sourceAdmin = unifiedAdmin ?? qqState.config?.admin;
+      const current = adminFromSources({
+        unified: { admin: sourceAdmin },
+        qq: qqState.config,
+        bili: biliState.config,
+      });
+      if (!current.qq && !current.biliMid) return;
+      const next = normalizeAdmin(current);
+      const prev = normalizeAdmin(qqState.config?.admin);
+      if (JSON.stringify(prev) === JSON.stringify(next)) return;
+      const planned = projectAdminSave({ current: next, qq: qqState.config });
+      if (!planned.qq) return;
+      saveQqConfig(planned.qq);
+      pluginLog('管理员称呼已补齐到 QQ config.json（桥接重启后生效）');
+      setTimeout(() => {
+        void bridgeStatus().then((st) => {
+          if (!st.running) return;
+          return restartBridge({ dshWebUrl: currentDshUrl() });
+        }).catch(() => {});
+      }, 1500).unref?.();
+    } catch (error) {
+      pluginLog('管理员称呼投影失败（继续使用现有配置）：', error?.message ?? error);
+    }
+  }
+
+  ensureAdminProjection();
 
   // ── 角色人格：启动迁移 + 切换编排 ───────────────────────────────────────
   // 迁移只做一次：有旧记忆/旧 B站 账本才建第一个角色；旧目录原样保留作冷备份。
@@ -718,10 +755,38 @@ export function apply(ctx) {
   // ── 配置读写 ────────────────────────────────────────────────────────────
   async function handleConfig(req, res) {
     if (req.method === 'GET') {
-      json(res, 200, { ok: true, ...readAll(), paths: pathSummary(), backups: listBackups(20) });
+      json(res, 200, {
+        ok: true, ...readAll(), paths: pathSummary(), backups: listBackups(20),
+        // 保存时回传这些戳：服务端据此判断"加载之后配置有没有被别处改过"
+        stamps: {
+          qq: fileStamp(QQ_CONFIG),
+          bili: fileStamp(BILI_CONFIG),
+          unified: fileStamp(path.join(STATE_DIR, 'config.json')),
+        },
+      });
       return;
     }
     const body = JSON.parse(await readBody(req) || '{}');
+    // 乐观并发：设置页加载后，如果配置被控制台/别的窗口改过，这里拒绝整份回写，
+    // 否则会把别人的修改覆盖掉（2026-10-29：语音开关"自己回弹"）。
+    const baseStamp = body?.baseStamp && typeof body.baseStamp === 'object' ? body.baseStamp : null;
+    const currentStamps = {
+      qq: fileStamp(QQ_CONFIG),
+      bili: fileStamp(BILI_CONFIG),
+      unified: fileStamp(path.join(STATE_DIR, 'config.json')),
+    };
+    if (baseStamp) {
+      const stale = ['qq', 'bili', 'unified'].filter((k) => isStale(baseStamp[k], currentStamps[k]));
+      if (stale.length) {
+        json(res, 409, {
+          ok: false, code: 'CONFIG_STALE',
+          error: `配置已被别处修改（${stale.join(' / ')}），本次保存未执行`,
+          hint: '点「重新读取」拿到最新配置后再改；直接覆盖会丢掉别人的修改',
+          stamps: currentStamps,
+        });
+        return;
+      }
+    }
     const result = { ok: true, saved: {}, warnings: [] };
     // ── 管理员：QQ ⇄ B站 默认是同一个人 ────────────────────────────────────
     // 合体层 admin 是唯一真相；旧格式（qq.ownerQQ / bili.owner）是投影。

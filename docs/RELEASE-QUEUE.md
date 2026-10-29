@@ -11,6 +11,36 @@
 
 ## 待发布
 
+### 批次 2026-10-29 23:30 · 管理员称呼投影修复（v0.7.3 后热修）
+<!-- release-batch: start=2026-10-29T23:30+08:00 end=2026-10-29T23:40+08:00 commits=00cc8b2 -->
+
+**覆盖提交**：`00cc8b2`
+**背景**：`v0.7.3`（212c2b0）只修了浏览中文路径；v0.7.3 不含本修复。
+**建议**：patch → **0.7.4**
+
+**问题**：v0.7.2 用户把称呼设为「弥叭」，QQ 提示词仍生成 `称呼「管理员」`，
+模型输出「弥叭管理员」。
+
+**根因**：
+1. `projectAdminSave` 的 outQq 只写 `ownerQQ`，没投影 `displayName/biliName/gentle`；
+2. 桥接独立进程只读 QQ `config.json`，读不到 unified；
+3. `adminDisplayName` 没名字时兜底返回 `'管理员'`，把身份词当称呼；
+4. 桥接只在启动时读配置。
+
+**修法**：完整 admin 投影写入 QQ config；`adminDisplayName` 空串兜底；提示词明确
+「管理员是身份不是称呼」；`ensureAdminProjection()` 启动补投影，桥接在跑自动重启；
+`adminFromSources` 回退 QQ 已有 admin，避免升级丢称呼。
+
+**case**：[docs/cases/2026-10-29-admin-display-name-projection.md](cases/2026-10-29-admin-display-name-projection.md)
+
+**验证**：`test-admin-identity`、`test-admin-prompt-wiring`；`npm run test:audit` 83/83；
+本机 config 实测提示词含 `称呼「弥叭」`、不含 `称呼「管理员」`。
+
+**发布交接**：同步 `src/admin-identity.js`、`plugins/surfcore/lib/index.js`、`scripts/test-admin-identity.mjs`、`docs/*`；
+重启 DSH 后确认插件启动自动补投影/重启桥接，QQ 提示词变为 `称呼「弥叭」`。
+
+---
+
 ### 批次 2026-10-29 22:40 · 原生「浏览…」中文路径乱码（v0.7.2 后热修）
 <!-- release-batch: start=2026-10-29T22:40+08:00 end=2026-10-29T22:45+08:00 commits=e0fcaf7 -->
 
@@ -72,7 +102,7 @@
    - 两个 case、PITFALLS #83/#84/#85、CHANGELOG、HANDOFF、RELEASE 计数 81。
 
 二、测了什么、结果
-- npm run test:audit → 81/81
+- npm run test:audit → 83/83
 - npm run test:regressions → 全部通过
 - plugins/surfcore npm test → 全绿
 - node scripts/test-voice-pack-import.mjs → 9/9

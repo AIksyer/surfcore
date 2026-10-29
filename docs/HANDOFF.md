@@ -20,8 +20,9 @@
 | 桥接接口与结构化错误 | `src/bridge.js`：`import-inspect/import/import-cancel/import-delete-source/import-delete-backup` |
 | 设置页导入按钮、确认框、错误弹窗、进度 | `plugins/surfcore/lib/client.js`；删除旧「手动指定包目录」 |
 | 云端参考音频下载 | 原来 `<a target=_blank>` 被宿主拦 → fetch+Blob；加「打开所在目录」`sample-open`（`plugins/surfcore/lib/index.js`） |
+| 管理员称呼 | v0.7.2 反馈：QQ config 缺 `admin` 投影 → `adminDisplayName` 兜底成「管理员」；已补完整投影、空串兜底、启动自动补投影（`src/admin-identity.js`、`plugins/surfcore/lib/index.js`） |
 | 错误字段不再丢 | 插件 `api()` 保留 `code/hint/missing` |
-| 回归 | `scripts/test-voice-pack-import.mjs`（9 项），进 test:audit → **81/81** |
+| 回归 | `scripts/test-voice-pack-import.mjs`（9 项），进 test:audit → **83/83** |
 
 ### 候选离线包（POC）
 
@@ -37,7 +38,9 @@
 ### 已验证
 
 - `node scripts/test-voice-pack-import.mjs` → 9/9；
-- `npm run test:audit` → **81/81**（注意：`test-voice-cloud-credentials` 曾因 Windows 临时目录抖动偶发失败，单跑通过）；
+- `npm run test:audit` → **83/83**（注意：`test-voice-cloud-credentials` 曾因 Windows 临时目录抖动偶发失败，单跑通过）；
+- 管理员称呼：`test-admin-identity` / `test-admin-prompt-wiring` 通过；本机 config 实测
+  `adminDisplayName`=弥叭，compact 提示词含 `称呼「弥叭」`、不含 `称呼「管理员」`。
 - `npm run test:regressions` → 全过；`plugins/surfcore npm test` → 全绿；
 - 本地包微调权重已实测能被 GPT-SoVITS 加载并生成 WAV；云端包已实测能启动、piper 兜底能出声。
 - **真实 7.9G 导入**：用 `createVoicePacks` 把 `D:/surfcore-poc/stage/voice-local` 导入到
@@ -51,7 +54,7 @@
 - 没有做“运行自检”；成功文案只表示文件导入，不表示语音服务可用。
 - 导入的失败/取消分支有单测；真实 7.9G 复制已跑通，但取消清理失败、旧包备份恢复的 Windows 现场未手测。
 - 发布前仍要决定：piper GPL 合规/替换、huayan 与微调权重许可、是否公开候选包。
-- 建议版本：patch 0.6.23（与今天前两批同版）；未改 version。
+- 建议版本：**0.7.4** 热修（v0.7.3 之后；管理员称呼投影修复）；本会话未改 version。
 
 ---
 

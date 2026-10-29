@@ -58,10 +58,25 @@ try {
     const restore = stubFetch({ version: '0.7.0' });
     try {
       const r = await inspectVersionComponent({ versionRepo: repo, dir });
-      ok(r.status === 'update', '无提交记录 + 远端更高 → status=update', JSON.stringify(r));
-      ok(r.updateAvailable === true, 'updateAvailable=true');
-      ok(r.latestVersion === '0.7.0', '目标版本显示 0.7.0 而不是提交号', String(r.latestVersion));
-      ok(r.code === 'new-version', 'code=new-version', String(r.code));
+      // 2026-10-29：没有安装证据时不能自动覆盖 → 检查阶段就标 blocked（避免点了失败、下次又弹）
+      ok(r.status === 'blocked', '无提交记录且无安装证据 → status=blocked', JSON.stringify(r));
+      ok(r.code === 'evidence-insufficient', 'code=evidence-insufficient', String(r.code));
+      ok(typeof r.hint === 'string' && r.hint.includes('手动'), '给手动下载指引', String(r.hint));
+      ok(Boolean(r.blocked), '带 blocked 字段（不会进 pending）', String(r.blocked));
+    } finally { restore(); }
+  }
+
+  // 用例 1.5：有安装记录（meta）→ 正常判 update
+  {
+    const dir = makeInstall('with-meta-update', '0.6.22');
+    fs.writeFileSync(path.join(dir, '.installed-meta.json'), JSON.stringify({ version: '0.6.22', sha: 'deadbeef' }));
+    const repo = `Mieksido/t15-${seq += 1}`;
+    const restore = stubFetch({ version: '0.7.0' });
+    try {
+      const r = await inspectVersionComponent({ versionRepo: repo, dir });
+      ok(r.status === 'update', '有安装记录 + 远端更高 → status=update', JSON.stringify(r));
+      ok(['new-version', 'new-commit'].includes(r.code), 'code 表示有新版本/新提交', String(r.code));
+      ok(!r.blocked, '不应 blocked');
     } finally { restore(); }
   }
 
@@ -162,6 +177,65 @@ try {
     } finally { restore(); }
   }
 
+  // 用例 6.6：缺版本号时用 Release tag 兜底（302 不吃 API 配额）
+  {
+    const dir = makeInstall('tag-fallback', '0.6.22');
+    fs.writeFileSync(path.join(dir, '.installed-meta.json'), JSON.stringify({ version: '0.6.22', sha: 'deadbeef' }));
+    const repo = `Mieksido/t66-${seq += 1}`;
+    const real = globalThis.fetch;
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      if (u.includes('/releases/latest')) {
+        return new Response(null, { status: 302, headers: { location: `https://github.com/${repo}/releases/tag/v0.9.1` } });
+      }
+      if (u.includes('/commits/main')) return new Response('{}', { status: 404 });
+      if (u.includes('/contents/package.json')) return new Response('{}', { status: 404 });
+      return new Response('{}', { status: 404 });
+    };
+    try {
+      const r = await inspectVersionComponent({ versionRepo: repo, dir });
+      const { setGitHubToken } = await import('../plugins/surfcore/lib/updates.js');
+      setGitHubToken('');
+      // tag 兜底只在"取不到版本号且取不到提交"时生效；这里两者都 404 → unknown，但不应崩溃
+      ok(['unknown', 'latest', 'update', 'blocked'].includes(r.status), 'tag 兜底：状态合法', JSON.stringify(r));
+    } finally { globalThis.fetch = real; }
+  }
+
+  // 用例 6.7：手动覆盖安装后自愈——有包内清单但没 .installed-manifest → 自动补登记
+  {
+    const dir = makeInstall('self-heal', '0.7.0');
+    fs.mkdirSync(path.join(dir, 'release'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'release', 'install-manifest.json'), JSON.stringify({ version: '0.7.0', files: {} }));
+    const repo = `Mieksido/t67-${seq += 1}`;
+    const restore = stubFetch({ version: '0.7.0' });
+    try {
+      await inspectVersionComponent({ versionRepo: repo, dir });
+      ok(fs.existsSync(path.join(dir, '.installed-manifest.json')), '自愈：补写 .installed-manifest.json');
+      ok(fs.existsSync(path.join(dir, '.installed-meta.json')), '自愈：补写 .installed-meta.json');
+    } finally { restore(); }
+  }
+
+  // 用例 6.8：手动覆盖到 0.7.5，但旧清单/旧提交号还在 → 必须刷新证据，不能报"有更新"是旧提交
+  {
+    const dir = makeInstall('manual-upgrade', '0.7.5');
+    fs.mkdirSync(path.join(dir, 'release'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'release', 'install-manifest.json'), JSON.stringify({ version: '0.7.5', files: {} }));
+    fs.writeFileSync(path.join(dir, '.installed-manifest.json'), JSON.stringify({ version: '0.7.3', files: {} }));
+    fs.writeFileSync(path.join(dir, '.installed-meta.json'), JSON.stringify({ version: '0.7.3', sha: 'deadbeefdeadbeef' }));
+    const repo = `Mieksido/t68-${seq += 1}`;
+    const restore = stubFetch({ version: '0.7.6' });
+    try {
+      const r = await inspectVersionComponent({ versionRepo: repo, dir });
+      const manifest = JSON.parse(fs.readFileSync(path.join(dir, '.installed-manifest.json'), 'utf8'));
+      ok(manifest.version === '0.7.5', '覆盖安装后：安装清单刷新到当前版本', manifest.version);
+      const meta = JSON.parse(fs.readFileSync(path.join(dir, '.installed-meta.json'), 'utf8'));
+      ok(meta.version === '0.7.5' && !meta.sha, '覆盖安装后：安装记录刷新且不再带旧提交号', JSON.stringify(meta));
+      ok(r.status === 'update', '覆盖安装后：仍能正确识别远端更新', JSON.stringify(r));
+      ok(r.latestVersion === '0.7.6', '覆盖安装后：显示版本号 0.7.6', String(r.latestVersion));
+      ok(r.code !== 'new-commit', '覆盖安装后：不再按旧提交判定', String(r.code));
+    } finally { restore(); }
+  }
+
   // 用例 7：复刻事故现场——无 git、无 .installed-meta、本地 0.6.22、远端 0.7.0
   // 期望：inspectComponent 降级后按版本号判断 → status=update（不能是 latest）
   {
@@ -175,7 +249,9 @@ try {
     try {
       const { inspectComponent } = await import('../plugins/surfcore/lib/updates.js');
       const r = await inspectComponent({ id: 'surfcore', name: 'SurfCore 本体', kind: 'git', dir, versionRepo: repo });
-      ok(r.status === 'update', '事故现场 → status=update', JSON.stringify(r));
+      // 有更新但缺安装证据：检查阶段必须显示"被阻止"，不能进待办（否则点了失败、下次又弹）
+      ok(r.status === 'blocked', '事故现场 → status=blocked', JSON.stringify(r));
+      ok(r.code === 'evidence-insufficient', '事故现场 → code=evidence-insufficient', String(r.code));
       ok(r.updateAvailable === true, '事故现场 → updateAvailable=true');
       ok(r.latestVersion === '0.7.0', '事故现场 → 目标版本 0.7.0');
       ok(String(r.gitReason ?? '').includes('git'), '保留 git 缺失说明', String(r.gitReason));

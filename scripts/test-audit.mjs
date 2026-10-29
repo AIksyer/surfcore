@@ -165,6 +165,8 @@ const tests = [
   'test-owner-audit.mjs',
   // 检查更新三态（2026-10-29 事故）：无 git / 无安装记录时按版本号判断；
   // 取不到远端版本号必须是 unknown，不能显示"最新"。
+  // 语音三闸门 + 配置双写（2026-10-29 复盘）：工具常注册、拒绝带 code/hint、保存带戳防覆盖。
+  'test-voice-gates.mjs',
   'test-update-apply-result.mjs',
   'test-update-version-fallback.mjs',
   // 版本号单一真相：根/插件 package.json 一致、无硬编码、CHANGELOG 有当前版本。

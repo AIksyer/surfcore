@@ -83,7 +83,7 @@ try {
 
   // 1) 下载 404 → 失败带 code/hint
   {
-    const dir = makeTarget('dl-404');
+    const dir = makeTarget('dl-404', '0.6.22', { withMeta: true });
     const svc = mkService(dir);
     const restore = stubFetch(async (u) => (u.includes('/archive/') ? new Response('nope', { status: 404 }) : undefined));
     process.env.SURFCORE_UPDATE_NO_SPAWN = '1';
@@ -99,7 +99,7 @@ try {
 
   // 2) 下载超时 → download.timeout
   {
-    const dir = makeTarget('dl-timeout');
+    const dir = makeTarget('dl-timeout', '0.6.22', { withMeta: true });
     const svc = mkService(dir);
     const restore = stubFetch(async (u) => {
       if (u.includes('/archive/')) {
@@ -121,7 +121,7 @@ try {
 
   // 3) 包损坏（不是 zip）→ verify.unzip-failed
   {
-    const dir = makeTarget('bad-zip');
+    const dir = makeTarget('bad-zip', '0.6.22', { withMeta: true });
     const svc = mkService(dir);
     const restore = stubFetch(async (u) => (u.includes('/archive/') ? new Response(Buffer.from('this is not a zip'), { status: 200 }) : undefined));
     process.env.SURFCORE_UPDATE_NO_SPAWN = '1';
@@ -266,6 +266,28 @@ try {
     const rec = JSON.parse(fs.readFileSync(path.join(okRun.stateDir, 'updates-applied', applied[0]), 'utf8'));
     ok(rec.verified === true && rec.version === '9.9.9', '助手：记录带 verified 与版本', JSON.stringify(rec));
     ok(fs.existsSync(path.join(okRun.target, '.installed-manifest.json')), '助手：写入安装清单副本');
+  }
+
+  // 5.6) 磁盘版本变了 → 旧的检查结果要丢弃（否则弹窗显示 v0.7.3→旧提交）
+  {
+    const dir = makeTarget('stale-results', '0.7.5', { withMeta: true });
+    const stateDir = path.join(dir, '.state');
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(path.join(stateDir, 'updates.json'), JSON.stringify({
+      lastCheckAt: Date.now(),
+      results: [{
+        id: 'surfcore', name: 'SurfCore 本体', dir, available: true,
+        installedVersion: '0.7.3', latestVersion: 'db18896', updateAvailable: true,
+      }],
+    }));
+    const svc = createUpdatesService({
+      stateDir,
+      components: () => [{ id: 'surfcore', name: 'SurfCore 本体', dir, kind: 'version', versionRepo: 'Mieksido/t' }],
+      pluginLog: () => {},
+    });
+    const st = svc.status();
+    ok((st.results ?? []).length === 0, '版本变了 → 旧结果被丢弃', JSON.stringify(st.results));
+    ok((st.pending ?? []).length === 0, '版本变了 → 不再待更新（不会弹旧提示）');
   }
 
   // 6) 重启后读取"上次更新结果"

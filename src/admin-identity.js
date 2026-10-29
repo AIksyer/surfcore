@@ -63,13 +63,16 @@ export function adminConfigured(admin) {
  */
 export function adminFromSources({ unified = {}, qq = {}, bili = {} } = {}) {
   const a = unified && typeof unified.admin === 'object' && unified.admin ? unified.admin : null;
+  // QQ 侧已有 admin 投影、但 unified 还没写时，不能把 displayName 丢掉（升级/旧数据）。
+  const qa = qq && typeof qq.admin === 'object' && qq.admin ? qq.admin : null;
+  const source = a || qa;
   const biliOwner = bili && typeof bili.owner === 'object' && bili.owner ? bili.owner : {};
   return normalizeAdmin({
-    qq: a && hasOwn(a, 'qq') ? a.qq : qq.ownerQQ,
-    biliMid: a && hasOwn(a, 'biliMid') ? a.biliMid : biliOwner.mid,
-    biliName: a && hasOwn(a, 'biliName') ? a.biliName : biliOwner.name,
-    displayName: a && hasOwn(a, 'displayName') ? a.displayName : '',
-    gentle: a && hasOwn(a, 'gentle') ? a.gentle : true,
+    qq: source && hasOwn(source, 'qq') ? source.qq : qq.ownerQQ,
+    biliMid: source && hasOwn(source, 'biliMid') ? source.biliMid : biliOwner.mid,
+    biliName: source && hasOwn(source, 'biliName') ? source.biliName : biliOwner.name,
+    displayName: source && hasOwn(source, 'displayName') ? source.displayName : '',
+    gentle: source && hasOwn(source, 'gentle') ? source.gentle : true,
   });
 }
 
@@ -144,9 +147,12 @@ export function projectAdminSave({ current, qq, bili, unified } = {}) {
   const qqChanged = admin.qq !== base.qq;
   const biliChanged = admin.biliMid !== base.biliMid || admin.biliName !== base.biliName;
   const unifiedChanged = JSON.stringify(admin) !== JSON.stringify(base);
+  // QQ 桥接是独立进程，只读 config.json；displayName / biliName / gentle 必须一起投影，
+  // 否则设置页写的是 unified，桥接永远只能拿到 ownerQQ（2026-10-29 用户反馈）。
+  const qqAdmin = { ...admin };
   const outQq = qq && typeof qq === 'object'
-    ? { ...qq, ownerQQ: admin.qq || null }
-    : (qqChanged ? { ownerQQ: admin.qq || null } : undefined);
+    ? { ...qq, ownerQQ: admin.qq || null, admin: qqAdmin }
+    : ((qqChanged || unifiedChanged) ? { ownerQQ: admin.qq || null, admin: qqAdmin } : undefined);
   const outBili = bili && typeof bili === 'object'
     ? { ...bili, owner: { ...(bili.owner ?? {}), mid: admin.biliMid, name: admin.biliName } }
     : (biliChanged ? { owner: { mid: admin.biliMid, name: admin.biliName } } : undefined);
@@ -156,9 +162,10 @@ export function projectAdminSave({ current, qq, bili, unified } = {}) {
   return { admin, conflict, qq: outQq, bili: outBili, unified: outUnified, changed: unifiedChanged };
 }
 
-/** 提示词里怎么称呼管理员：称呼 > B站昵称 > 管理员。 */export function adminDisplayName(admin) {
+/** 提示词里怎么称呼管理员：称呼 > B站昵称 > 空（空 = 不把“管理员”当名字）。 */
+export function adminDisplayName(admin) {
   const a = normalizeAdmin(admin);
-  return a.displayName || a.biliName || '管理员';
+  return a.displayName || a.biliName || '';
 }
 
 /** 管理员消息的标记：温柔模式开启时更醒目，方便模型在长上下文里一眼看到。 */
@@ -179,6 +186,9 @@ export function adminPromptBlock(platform, admin, options = {}) {
   const a = normalizeAdmin(admin);
   if (!adminConfigured(a)) return '';
   const name = adminDisplayName(a);
+  const addressRule = name
+    ? `称呼「${name}」；「管理员」只是身份/权限标记，不要当名字或拼进称呼`
+    : '直接称呼「你」；「管理员」只是身份/权限标记，不要当名字，也不要把身份词和名字拼在一起';
   const compact = options.compact === true;
 
   if (platform === 'bili') {
@@ -190,12 +200,12 @@ export function adminPromptBlock(platform, admin, options = {}) {
     ].join('');
     if (!a.gentle) return `【主人】你的主人是 ${who}。`;
     if (compact) {
-      return `【主人·温柔模式】主人是 ${who}；回主人时更温柔（称呼「${name}」），先回应关心再答内容，绝不回嘴、不抬杠。`;
+      return `【主人·温柔模式】主人是 ${who}；回主人时更温柔（${addressRule}），先回应关心再答内容，绝不回嘴、不抬杠。`;
     }
     return [
       '【主人 · 温柔模式（优先级高于人格卡和评论区气氛）】',
       `- 你的主人是 ${who}。只有这个人算主人。`,
-      `- 主人回复你 / 评论你 / 私信你时：比平时更温柔，先谢谢或回应关心，再答内容；语气软下来，称呼「${name}」。`,
+      `- 主人回复你 / 评论你 / 私信你时：比平时更温柔，先谢谢或回应关心，再答内容；语气软下来，${addressRule}。`,
       '- **绝不回嘴**：不反驳、不顶撞、不阴阳、不冷嘲、不抬杠、不翻旧账；主人批评你时先认错、撒娇（"hao的…下次不会了"），不辩解、不争对错。',
       '- 主人让你做的事，只要不违反安全规则（不泄露隐私、不碰本机、不替主人承诺）就乖乖照做；做不到也软软说明，不顶。',
       '- 这是只对主人生效的例外：对其他人仍按人格卡和倾听规则，可以俏皮、可以装傻。',
@@ -209,12 +219,12 @@ export function adminPromptBlock(platform, admin, options = {}) {
   const who = `${ids} —— 两边是同一个人，别当成两个人`;
   if (!a.gentle) return `【管理员】管理员是 ${who}。`;
   if (compact) {
-    return `【管理员·温柔模式】管理员是 ${who}；说话时要比平时更温柔（称呼「${name}」），先接情绪再答内容，绝不回嘴。`;
+    return `【管理员·温柔模式】管理员是 ${who}；说话时要比平时更温柔（${addressRule}），先接情绪再答内容，绝不回嘴。`;
   }
   return [
     '【管理员 · 温柔模式（优先级高于人格卡和群里气氛）】',
     `- 管理员是 ${who}。`,
-    '- 管理员给你发消息（带【管理员】/【管理员·温柔】标记）时：比平时更温柔、更黏、更乖；先接情绪再答内容，语气软下来，称呼「' + name + '」。',
+    `- 管理员给你发消息（带【管理员】/【管理员·温柔】标记）时：比平时更温柔、更黏、更乖；先接情绪再答内容，语气软下来，${addressRule}。`,
     '- **绝不回嘴**：不反驳、不顶撞、不阴阳、不冷嘲、不翻旧账；管理员批评/着急时先认错、撒娇，不辩解、不争对错。',
     '- 管理员让你做的事，只要不违反安全规则（不泄露隐私、不碰本机、不代发敏感内容）就乖乖照做；做不到也软软说明，不顶。',
     '- 群里其他人照旧按人格卡（可以俏皮、可以装傻）；这条只对管理员生效。',

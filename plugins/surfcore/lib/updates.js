@@ -277,8 +277,32 @@ export async function inspectVersionComponent(component, { fetch: doFetch = true
   if (!installedVersion) {
     try { installedVersion = String(JSON.parse(fs.readFileSync(path.join(dir, 'version.json'), 'utf8')).version ?? ''); } catch {}
   }
-  const meta = readInstalledMeta(dir);
+  let meta = readInstalledMeta(dir);
   if (!installedVersion && meta?.version) installedVersion = String(meta.version);
+
+  // 自愈：目录里有新版包带来的 release/install-manifest.json（说明是解压安装的），
+  // 但还没有 .installed-manifest.json / .installed-meta.json → 就地补登记。
+  // 否则手动覆盖安装的用户会永远卡在 evidence-insufficient（2026-10-29 反馈）。
+  try {
+    const pkgManifest = path.join(dir, 'release', 'install-manifest.json');
+    const installedManifest = path.join(dir, '.installed-manifest.json');
+    if (installedVersion && fs.existsSync(pkgManifest)) {
+      let installedManifestVersion = '';
+      try { installedManifestVersion = String(JSON.parse(fs.readFileSync(installedManifest, 'utf8')).version ?? ''); } catch {}
+      // 手动覆盖安装后，旧清单/旧提交号还留在目录里 → 会拿"旧提交 vs 远端"比出假更新
+      // （用户升到 0.7.5 仍被提示 v0.7.3→db18896）。版本对不上就地刷新证据。
+      const stale = !installedManifestVersion || installedManifestVersion !== installedVersion;
+      if (stale) {
+        fs.copyFileSync(pkgManifest, installedManifest);
+        // 版本变了，旧 sha 已不代表当前文件；写回只有版本号的记录（走版本号比对）
+        writeInstalledMeta(dir, { version: installedVersion });
+        meta = readInstalledMeta(dir);
+      } else if (!fs.existsSync(path.join(dir, '.installed-meta.json'))) {
+        writeInstalledMeta(dir, { version: installedVersion });
+        meta = readInstalledMeta(dir);
+      }
+    }
+  } catch { /* 补登记失败不致命，下面会按缺证据处理 */ }
   if (!dir) return { ...base, available: false, installedVersion: '', reason: '安装目录不存在（还没装）' };
   if (!installedVersion && !meta) return { ...base, available: false, installedVersion: '', reason: '目录里没有 version.json / .installed-meta.json（还没装好，或装到了别的目录）' };
   if (!doFetch) return { ...base, available: true, installedVersion, latestVersion: null, updateAvailable: false, reason: '本次未拉取' };
@@ -289,7 +313,13 @@ export async function inspectVersionComponent(component, { fetch: doFetch = true
   // 只在"没有本地提交记录"时取版本号（要拿它做版本比较）；
   // 有提交记录时用提交号就够了，省一次 API 配额（60/h 很容易被打满）。
   const localShaHint = String(meta?.sha ?? '');
-  const remoteVer = (!localShaHint || !remoteSha) ? await fetchRemoteVersion(repo).catch(() => '') : '';
+  let remoteVer = (!localShaHint || !remoteSha) ? await fetchRemoteVersion(repo).catch(() => '') : '';
+  if (!remoteVer) {
+    // 版本号取不到（限流/网络）时，用 releases/latest 的 302 tag 兜底：不消耗 API 配额，
+    // 也避免界面只能显示提交号（用户会以为编号就是版本）。
+    const latestTag = await fetchLatestByRedirect(repo).catch(() => null);
+    if (latestTag?.tag) remoteVer = String(latestTag.tag).replace(/^v/i, '');
+  }
   if (remoteSha) {
     const localSha = String(meta?.sha ?? '');
     if (localSha && localSha !== remoteSha) {
@@ -306,6 +336,20 @@ export async function inspectVersionComponent(component, { fetch: doFetch = true
       // 用户看到 "0.6.22 → 1ad2042（最新）" 且没有更新按钮（2026-10-29 实测）。
       // 退回按版本号比：远端 package.json 版本更高就是有更新。
       if (installedVersion && remoteVer && semverCompare(remoteVer, installedVersion) > 0) {
+        // 有更新，但先看有没有"安装证据"：既无安装清单也无安装记录时不能自动覆盖，
+        // 必须在这里标成 blocked —— 否则用户点了更新会失败、下次检查又弹同一条（2026-10-29 反馈）。
+        const hasManifest = fs.existsSync(path.join(dir, '.installed-manifest.json'));
+        const evidence = hasManifest || Boolean(meta);
+        if (!evidence) {
+          return {
+            ...base, available: true, installedVersion, latestVersion: remoteVer,
+            updateAvailable: true, remoteSha, channel: 'version',
+            status: 'blocked', code: 'evidence-insufficient',
+            blocked: '目录里没有安装清单/安装记录，无法确认归属',
+            reason: `有新版 v${remoteVer}，但这个目录没有安装证据（无 .installed-manifest.json / .installed-meta.json）`,
+            hint: '为安全不自动覆盖：请手动下载新版 zip 覆盖一次；装好后新版会自动补登记，之后可自动更新',
+          };
+        }
         return {
           ...base, available: true, installedVersion, latestVersion: remoteVer,
           updateAvailable: true, remoteSha, channel: 'version',
@@ -361,12 +405,24 @@ export async function inspectVersionComponent(component, { fetch: doFetch = true
   }
   const latestVersion = latest.tag.replace(/^v/i, '');
   const cmp = semverCompare(latestVersion, installedVersion);
+  const hasEvidence = fs.existsSync(path.join(dir, '.installed-manifest.json')) || Boolean(meta);
+  if (cmp > 0 && !hasEvidence) {
+    return {
+      ...base, available: true, installedVersion, latestVersion,
+      updateAvailable: true, status: 'blocked', code: 'evidence-insufficient',
+      blocked: '目录里没有安装清单/安装记录，无法确认归属',
+      reason: `有新版 v${latestVersion}，但这个目录没有安装证据`,
+      hint: '为安全不自动覆盖：请手动下载新版 zip 覆盖一次；装好后新版会自动补登记',
+    };
+  }
   return {
     ...base,
     available: true,
     installedVersion,
     latestVersion,
     updateAvailable: cmp > 0,
+    status: cmp > 0 ? 'update' : 'latest',
+    code: cmp > 0 ? 'new-version' : 'up-to-date',
     ahead: cmp < 0,
     versionSource: latest.source ?? '',
     versionStale: latest.stale === true,
@@ -777,6 +833,23 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
       };
     }
   } catch { /* 第一次跑 / 文件坏了：用默认值，不炸 */ }
+
+  // 手动覆盖安装后，磁盘上的版本已经变了，但 updates.json 里还是上次检查的旧结果
+  // （用户升到 0.7.5 仍弹 "v0.7.3 → db18896"）。启动时把"版本对不上"的结果丢掉，
+  // 下一次检查会重新按当前版本算。
+  try {
+    const before = (state.results ?? []).length;
+    state.results = (state.results ?? []).filter((row) => {
+      const dir = normalizeDir(row?.dir);
+      if (!dir) return true;
+      try {
+        const v = String(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version ?? '');
+        if (v && row.installedVersion && String(row.installedVersion) !== v) return false;
+      } catch { /* 读不到就保留，交给下一次检查 */ }
+      return true;
+    });
+    if ((state.results ?? []).length !== before) persist();
+  } catch { /* 校准失败不阻塞启动 */ }
 
   let checking = false;
   let applying = false;
@@ -1288,7 +1361,15 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
         const report = (state.results ?? []).find((row) => row.id === item.id);
         if (!report?.available) { results.push({ id: item.id, ok: false, error: report?.reason ?? '不可用' }); continue; }
         if (!report.updateAvailable) { results.push({ id: item.id, ok: true, skipped: true, message: '已是最新' }); continue; }
-        if (report.blocked) { results.push({ id: item.id, ok: false, error: report.blocked }); continue; }
+        if (report.blocked) {
+          results.push({
+            id: item.id, ok: false, status: 'blocked',
+            code: report.code ?? 'blocked',
+            reason: report.blocked, hint: report.hint ?? '',
+            error: report.blocked,
+          });
+          continue;
+        }
         const blocked = blockedReason(item);
         if (blocked) { results.push({ id: item.id, ok: false, error: blocked }); continue; }
 

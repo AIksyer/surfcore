@@ -6780,12 +6780,26 @@ async function main() {
           const token = String(body.token ?? req.headers['x-agent-token'] ?? '').trim();
           const key = String(body.key ?? body.target ?? '').trim();
           const voice = voiceCfg();
-          if (!voice.enabled) { sendJson({ ok: false, error: '语音功能已关闭' }, 403); return; }
+          if (!voice.enabled) {
+            sendJson({
+              ok: false, code: 'VOICE_DISABLED',
+              error: '语音功能已关闭（总闸）',
+              hint: '设置 → SurfCore → 全部参数 → socialV2.voice.enabled 打开；或在控制台开启后再发',
+            }, 403);
+            return;
+          }
           if (!key) { sendJson({ ok: false, error: 'key 不能为空（格式 group:群号 或 private:QQ号）' }, 400); return; }
           if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
           if (!token) { sendJson({ ok: false, error: 'reserved2 模式发送必须携带 agent token' }, 403); return; }
           if (!agentTokenOk(key, token)) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
-          if (!v2ToolEnabled('sendVoice')) { sendJson({ ok: false, error: '工具未启用：qq_send_voice' }, 403); return; }
+          if (!v2ToolEnabled('sendVoice')) {
+            sendJson({
+              ok: false, code: 'VOICE_TOOL_DISABLED',
+              error: '工具开关未启用：qq_send_voice',
+              hint: '设置 → SurfCore → 工具 → 「发语音」打开（或 socialV2.tools.sendVoice=true），保存后重启 DSH',
+            }, 403);
+            return;
+          }
           if (!v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
           if (shouldBlockSilentReply(key)) { sendJson({ ok: false, error: '静默模式已开启，当前不允许发送' }, 403); return; }
           {
