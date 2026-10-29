@@ -3412,11 +3412,17 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
 
       const save = async () => {
         setBusy(true); setMsg("保存中…");
+        let saved = false;
         try {
           await api("/voice/packs/cloud-config", { method: "POST", body: { id: "voice-cloud", ...form } });
-          setMsg("已保存"); toast("✓ 云端密钥已保存"); await read();
-        } catch (e) { setMsg("保存失败：" + e.message); }
-        finally { setBusy(false); }
+          saved = true;
+          setMsg("已保存");
+          try { await read(); } catch {}
+          // 通知是界面层的事：失败也不能把"保存成功"改写成失败（2026-10-30 用户反馈）
+          try { toast("✓ 云端密钥已保存"); } catch {}
+        } catch (e) {
+          setMsg(saved ? "已保存（界面提示失败）" : "保存失败：" + e.message);
+        } finally { setBusy(false); }
       };
       const test = async () => {
         setBusy(true); setMsg("测试中…");
@@ -5095,7 +5101,8 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
       const [unified, setUnified] = useState(null);
       const [saved, setSaved] = useState("");
       const [busy, setBusy] = useState("");
-      const [toast, setToast] = useState("");
+      // 浮层文案（字符串）。真正的通知函数叫 notify —— 两者别同名，否则会被误当函数传（2026-10-30）。
+      const [toastText, setToastText] = useState("");
       const [err, setErr] = useState("");
       // 记忆卡容量弹窗：80/90/100% 三档；页面开着时每分钟查一次（用户不一定停在「记忆」页）。
       const [memoryAlert, setMemoryAlert] = useState(null);
@@ -5109,8 +5116,8 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
       const budgetRef = useRef(null);
 
       const notify = (message) => {
-        setToast(message);
-        setTimeout(() => setToast(""), 4000);
+        setToastText(message);
+        setTimeout(() => setToastText(""), 4000);
       };
       // 让深层组件（如泛用 Field 的「浏览…」）也能弹提示，而不是静默失败。
       useEffect(() => { window.__surfcoreToast = notify; return () => { delete window.__surfcoreToast; }; }, []);
@@ -5282,7 +5289,7 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
         if (tab === "bili") return h(BiliTab, { cfg: bili, set: setBiliPath, qq: normalizedQq, setQqPath, admin: unified?.admin ?? {}, setAdmin, unified, setUnified: setUnifiedPath, qqPrivate: normalizedQq?.allow?.private ?? [], qqAllowAll: normalizedQq?.allowAllWhenEmpty === true, overview, busy, setBusy, toast: notify, reload });
         if (tab === "tokens") return h(TokenTab, { budget, limits: limitDraft, onChange: setLimitDraft, disabled: !!busy, alertedToday: tokenAlerted, onSave: () => save(false), busy, toast: notify });
         if (tab === "watch") return h(WatchTab, { busy, setBusy, toast: notify, goTab: setTab });
-        if (tab === "voice") return h(VoiceTab, { toast });
+        if (tab === "voice") return h(VoiceTab, { toast: notify });
         if (tab === "pet") return h(PetTab, { toast: notify, unified, setUnified: setUnifiedPath });
         if (tab === "memory") return h(MemoryTab, { qq: normalizedQq, unified, setUnified: setUnifiedPath, overview, busy, setBusy, toast: notify, reload });
         if (tab === "align") return h(AlignTab, { busy, setBusy, toast: notify, reload });
@@ -5315,7 +5322,7 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           h(Btn, { kind: "qbw-btn2", onClick: reload, disabled: !!busy }, "重新读取"),
           h("span", { className: "spacer" }),
           dirty ? h("span", { className: "qbw-dirty" }, "● 有改动还没保存（改了不点保存 = 没生效）") : h("span", { className: "qbw-ok" }, "已保存"),
-          toast ? h("span", { style: { marginLeft: "10px", color: "var(--dsw-alias-label-secondary)" } }, toast) : null),
+          toastText ? h("span", { style: { marginLeft: "10px", color: "var(--dsw-alias-label-secondary)" } }, toastText) : null),
         tokenAlert ? h("div", { className: "qbw-modal-backdrop", onClick: (e) => { if (e.target === e.currentTarget) setTokenAlert(null); } },
           h("div", { className: "qbw-modal" },
             h("h3", null, "⚠️ 今日 token 额度已用到 80%"),
