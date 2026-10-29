@@ -6,6 +6,7 @@
 
 | 日期 | 案例 | 一句话 | 版本 |
 | --- | --- | --- | --- |
+| 2026-10-30 | [桌宠对话一直 400：孤立代理项](2026-10-30-lone-surrogate-400.md) | `slice` 劈开 emoji → 提示词里有孤立代理项 → 模型 API 400；截断安全 + 发送前兜底 | 未发布 |
 | 2026-10-29 | [设置称呼「弥叭」仍叫管理员](2026-10-29-admin-display-name-projection.md) | QQ 投影只写 ownerQQ，桥接兜底把「管理员」当称呼 → 完整投影 + 空串兜底 | 待发布 |
 | 2026-10-29 | [原生浏览选中文目录后导入报不存在](2026-10-29-browse-chinese-path.md) | PowerShell stdout GBK 被 Node 当 UTF-8 → 路径乱码；改 UTF-8 临时文件 | 待发布 |
 | 2026-10-29 | [云端参考音频“下载”没反应](2026-10-29-cloud-sample-download.md) | 接口 200 但 `<a target=_blank>` 被宿主拦 → fetch+Blob，加「打开所在目录」 | 待发布 |
