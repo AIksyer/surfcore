@@ -8,9 +8,10 @@ import path from 'node:path';
 const REMOTE_SHA = '1ad2042aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 let seq = 0;
-function stubFetch({ sha = REMOTE_SHA, version = '0.7.0', mode = 'ok' } = {}) {
+function stubFetch({ sha = REMOTE_SHA, version = '0.7.0', mode = 'ok', seen = [] } = {}) {
   const real = globalThis.fetch;
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = async (url, init = {}) => {
+    seen.push({ url: String(url), headers: init.headers ?? {} });
     const u = String(url);
     if (mode === 'down') throw new Error('network down');
     if (mode === 'ratelimit' && u.includes('api.github.com')) {
@@ -134,6 +135,33 @@ try {
       if (savedPath2 !== undefined) process.env.Path = savedPath2;
     }
   }
+  // 用例 6.5：可选 token → 请求带 Authorization；不带 token → 不带（匿名 60 次/小时）
+  {
+    const { setGitHubToken } = await import('../plugins/surfcore/lib/updates.js');
+    const dir = makeInstall('token-case', '0.6.22');
+    const repo = `Mieksido/t65-${seq += 1}`;
+    const seen = [];
+
+    setGitHubToken('ghp_testtoken123');
+    let restore = stubFetch({ seen });
+    try {
+      await inspectVersionComponent({ versionRepo: repo, dir });
+      const withAuth = seen.filter((x) => x.url.includes('api.github.com'));
+      ok(withAuth.length > 0, 'token：确实请求了 api.github.com');
+      ok(withAuth.every((x) => String(x.headers.Authorization ?? '') === 'Bearer ghp_testtoken123'),
+        'token：每个 API 请求都带 Authorization', JSON.stringify(withAuth.map((x) => x.headers)));
+    } finally { restore(); }
+
+    seen.length = 0;
+    setGitHubToken('');
+    restore = stubFetch({ seen });
+    try {
+      await inspectVersionComponent({ versionRepo: repo, dir });
+      const noAuth = seen.filter((x) => x.url.includes('api.github.com'));
+      ok(noAuth.every((x) => !x.headers.Authorization), '无 token：不带 Authorization 头');
+    } finally { restore(); }
+  }
+
   // 用例 7：复刻事故现场——无 git、无 .installed-meta、本地 0.6.22、远端 0.7.0
   // 期望：inspectComponent 降级后按版本号判断 → status=update（不能是 latest）
   {

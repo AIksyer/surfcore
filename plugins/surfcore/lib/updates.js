@@ -30,6 +30,21 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const MAX_CHANGELOG = 20;
 const DEFAULT_BRANCH = 'main';
 
+// 可选的 GitHub token：填了就把匿名 60 次/小时 换成账号的 5000 次/小时。
+// 只用于 api.github.com 的读取请求；不写日志、不进诊断信息。
+let githubToken = '';
+export function setGitHubToken(token) {
+  githubToken = String(token ?? '').trim();
+}
+export function githubTokenConfigured() {
+  return Boolean(githubToken);
+}
+function ghHeaders(extra = {}) {
+  const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'surfcore-updates', ...extra };
+  if (githubToken) headers.Authorization = `Bearer ${githubToken}`;
+  return headers;
+}
+
 function runGit(args, { timeout = GIT_TIMEOUT_MS } = {}) {
   return new Promise((resolve) => {
     execFile('git', args, {
@@ -114,7 +129,7 @@ async function fetchRemoteVersion(repo) {
   if (cached && Date.now() - cached.at < 5 * 60_000) return cached.version;
   try {
     const res = await fetch(`https://api.github.com/repos/${repo}/contents/package.json?ref=main`, {
-      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'surfcore-updates' },
+      headers: ghHeaders(),
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return cached?.version ?? '';
@@ -133,7 +148,7 @@ async function fetchCommitSha(repo) {
   if (cached && Date.now() - cached.at < 5 * 60_000) return cached.sha;
   try {
     const res = await fetch(`https://api.github.com/repos/${repo}/commits/main`, {
-      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'surfcore-updates' },
+      headers: ghHeaders(),
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return cached?.sha ?? '';
@@ -200,7 +215,7 @@ async function fetchLatestByRedirect(repo) {
 async function fetchLatestTagOnly(repo) {
   try {
     const res = await fetch(`https://api.github.com/repos/${repo}/tags?per_page=1`, {
-      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'surfcore-updates' },
+      headers: ghHeaders(),
       signal: AbortSignal.timeout(8000),
     });
     if (res.ok) {
@@ -214,7 +229,7 @@ async function fetchLatestTagOnly(repo) {
 }
 
 async function fetchLatestRelease(repo) {
-  const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'surfcore-updates' };
+  const headers = ghHeaders();
   const found = [];
   try {
     const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, { headers, signal: AbortSignal.timeout(8000) });
@@ -747,7 +762,7 @@ export async function downloadReleaseAsset(component, report, { stateDir, plugin
   return { ok: true, path: dest, bytes: downloaded.bytes };
 }
 
-export function createUpdatesService({ stateDir, components, blockedReason = () => '', pluginLog = () => {} }) {
+export function createUpdatesService({ stateDir, components, blockedReason = () => '', pluginLog = () => {}, githubToken = () => '' }) {
   const file = path.join(stateDir, 'updates.json');
   const now = () => Date.now();
   let state = { dismissed: {}, lastCheckAt: 0, results: [], lastError: '' };
@@ -935,12 +950,14 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
       pending,
       pendingCount: pending.length,
       lastApply: readLastApply(),
+      githubTokenConfigured: githubTokenConfigured(),
       showPrompt: pending.length > 0,
     };
   }
 
   async function check({ fetch = true } = {}) {
     if (checking) return status();
+    try { setGitHubToken(githubToken()); } catch {}
     checking = true;
     try {
       const items = list();

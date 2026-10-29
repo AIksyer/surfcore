@@ -237,6 +237,7 @@ export function apply(ctx) {
   const updates = createUpdatesService({
     stateDir: STATE_DIR,
     pluginLog,
+    githubToken: () => String(readUnified().config?.updates?.githubToken ?? ''),
     blockedReason: (component) => {
       if (component.kind === 'pet' || component.id === 'surfpet') {
         try {
@@ -2633,6 +2634,23 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output 
     const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
     if (action === 'check') { json(res, 200, await updates.check({ fetch: true })); return; }
     if (action === 'apply') { json(res, 200, await updates.apply(ids)); return; }
+    if (action === 'set-token' || action === 'clear-token') {
+      try {
+        const current = readUnified().config ?? {};
+        const next = { ...current, updates: { ...(current.updates ?? {}) } };
+        if (action === 'clear-token') delete next.updates.githubToken;
+        else next.updates.githubToken = String(body.token ?? '').trim();
+        saveUnified(next);
+        json(res, 200, { ok: true, configured: action === 'set-token' && Boolean(next.updates.githubToken) });
+      } catch (error) {
+        json(res, 500, {
+          ok: false, code: 'token.save-failed',
+          error: `保存 token 失败：${String(error?.message ?? error).slice(0, 160)}`,
+          hint: '检查 config.json 是否可写；也可以稍后重试',
+        });
+      }
+      return;
+    }
     if (action === 'rollback') {
       const target = String(body.id ?? ids[0] ?? '').trim();
       json(res, 200, await updates.rollback(target));

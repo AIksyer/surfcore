@@ -4,6 +4,20 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.7.2] - 2026-10-29
+
+### 新增（可选 GitHub 令牌，解决“查不到：限流”）
+
+- 更新卡片下新增「GitHub 令牌（可选）」：粘贴只读 token 后，检查更新走**账号额度 5000 次/小时**，
+  不再受匿名 60 次/小时（按 IP）限制；
+- 请求层：`api.github.com` 的读取请求自动带 `Authorization: Bearer <token>`；留空仍按匿名请求；
+- 安全：输入框不回显、日志不打印、诊断信息不含 token；令牌只存在本机 `config.json` 的
+  `updates.githubToken`，可随时「清除」；
+- 未配置时卡片明确提示“匿名 60 次/小时，共享 IP 时可能遇到限流（查不到）”。
+
+> 测试：token 注入/不注入两态断言 + audit 83/83 + 插件测试全绿。
+
+
 ## [0.7.1] - 2026-10-29
 
 ### 修复（更新系统：不再静默失败）

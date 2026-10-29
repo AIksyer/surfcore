@@ -1335,6 +1335,19 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
       // 检查在插件里做（git fetch，只读）；界面只负责展示与确认。
       const updates = overview?.updates ?? {};
       const [updateOpen, setUpdateOpen] = useState(false);
+      const [tokenDraft, setTokenDraft] = useState("");
+      const saveGithubToken = async (clear = false) => {
+        setBusy("token");
+        try {
+          const r = await api("/updates", { method: "POST", body: clear ? { action: "clear-token" } : { action: "set-token", token: tokenDraft.trim() } });
+          if (!r.ok) throw new Error(r.error ?? "保存失败");
+          toast(clear ? "✓ 已清除令牌（回到匿名 60 次/小时）" : "✓ 令牌已保存（检查更新改用账号额度 5000 次/小时）");
+          setTokenDraft("");
+          await reload();
+        } catch (e) {
+          toast(`✗ ${e.message}${e.hint ? `；${e.hint}` : ""}`);
+        } finally { setBusy(""); }
+      };
       const [snowError, setSnowError] = useState(null);
       const [autoPrompted, setAutoPrompted] = useState(false);
       useEffect(() => {
@@ -1582,6 +1595,26 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
                 }, busy === "apply-update" ? "更新中…" : `立即更新（${(updates.pending ?? []).length}）`)
                 : null,
               h(Btn, { kind: "qbw-btn2", onClick: () => setUpdateOpen(true), disabled: !(updates.results ?? []).length }, "查看详情"))),
+          h("div", { style: { marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(127,127,127,.18)" } },
+            h("div", { className: "qbw-hint" },
+              updates.githubTokenConfigured
+                ? "GitHub 令牌：已配置（检查更新走账号额度 5000 次/小时）"
+                : "GitHub 令牌：未配置（匿名 60 次/小时，共享 IP 时可能遇到“查不到：限流”）"),
+            h("div", { style: { display: "flex", gap: "8px", alignItems: "center", marginTop: "6px", flexWrap: "wrap" } },
+              h("input", {
+                type: "password",
+                value: tokenDraft,
+                placeholder: updates.githubTokenConfigured ? "已配置；要更换请粘贴新令牌" : "粘贴只读 token（可留空）",
+                onChange: (e) => setTokenDraft(e.target.value),
+                style: { width: "280px" },
+              }),
+              h(Btn, { kind: "qbw-btn2", disabled: !!busy || !tokenDraft.trim(), onClick: () => saveGithubToken(false) },
+                busy === "token" ? "保存中…" : "保存令牌"),
+              updates.githubTokenConfigured
+                ? h(Btn, { kind: "qbw-btn2", disabled: !!busy, onClick: () => saveGithubToken(true) }, "清除")
+                : null),
+            h("div", { className: "qbw-hint", style: { marginTop: "4px" } },
+              "只需要“读公开仓库”的权限；令牌只存在本机 config.json，不会上传，也不会出现在诊断信息里。")),
           h(AdvancedSettings, { note: "SnowLuma 安装 / 扩展与平台：装好后很少改" },
             h("div", { className: "qbw-card" },
               h("h4", null, "SnowLuma 安装"),
