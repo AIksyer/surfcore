@@ -1539,7 +1539,7 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
                 : "还没检查")),
             (() => {
               // 查不到/失败：原因 + 建议，常驻显示（不能只留一句"不可查"）
-              const bad = (updates.results ?? []).filter((x) => x.status === "unknown" || x.status === "failed");
+              const bad = (updates.results ?? []).filter((x) => x.status === "unknown" || x.status === "failed" || x.status === "blocked");
               if (!bad.length) return null;
               return h("div", { className: "qbw-hint", style: { color: "#c0392b", marginTop: "4px" } },
                 bad.map((x) => `${x.name}：${x.reason || "原因不明"}${x.hint ? `（${x.hint}）` : ""}`).join("；"));

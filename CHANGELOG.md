@@ -4,6 +4,25 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.7.5] - 2026-10-29
+
+### 修复（更新提示反复弹、同一提交无限重试）
+
+- **现象**：设备上弹「SurfCore 本体 v0.7.2 → 提交 ddc0d81」，点「立即更新」后又弹回来，提交号不变。
+- **根因**：该目录既无 `.installed-manifest.json` 也无 `.installed-meta.json`；0.7.2 在**应用阶段**
+  才拦住（`evidence-insufficient`），失败后不记录 dismiss，于是下次检查又弹同一条；
+  弹窗又不展示这次失败，看起来像"点了没反应"。
+- **修法**：
+  - **检查阶段就判定**：缺安装证据但有新版 → `status=blocked`，并带 `blocked` 字段，
+    不再进入待办列表（不会再反复弹）；
+  - 卡片常驻显示「更新被阻止：原因（建议手动下载）」；
+  - **自愈**：目录里存在包自带的 `release/install-manifest.json` 时，自动补写
+    `.installed-manifest.json` 与 `.installed-meta.json` —— 手动覆盖安装过一次后即可恢复自动更新；
+  - 远端版本号取不到时，用 `releases/latest` 的 302 tag 兜底，界面显示 `v0.7.4` 而不是提交号。
+
+> 调查记录：见 docs/cases 中更新系统相关案例。
+
+
 ## [0.7.4] - 2026-10-29
 
 ### 修复（管理员称呼：设置「弥叭」却仍叫「管理员」）

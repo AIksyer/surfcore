@@ -83,7 +83,7 @@ try {
 
   // 1) 下载 404 → 失败带 code/hint
   {
-    const dir = makeTarget('dl-404');
+    const dir = makeTarget('dl-404', '0.6.22', { withMeta: true });
     const svc = mkService(dir);
     const restore = stubFetch(async (u) => (u.includes('/archive/') ? new Response('nope', { status: 404 }) : undefined));
     process.env.SURFCORE_UPDATE_NO_SPAWN = '1';
@@ -99,7 +99,7 @@ try {
 
   // 2) 下载超时 → download.timeout
   {
-    const dir = makeTarget('dl-timeout');
+    const dir = makeTarget('dl-timeout', '0.6.22', { withMeta: true });
     const svc = mkService(dir);
     const restore = stubFetch(async (u) => {
       if (u.includes('/archive/')) {
@@ -121,7 +121,7 @@ try {
 
   // 3) 包损坏（不是 zip）→ verify.unzip-failed
   {
-    const dir = makeTarget('bad-zip');
+    const dir = makeTarget('bad-zip', '0.6.22', { withMeta: true });
     const svc = mkService(dir);
     const restore = stubFetch(async (u) => (u.includes('/archive/') ? new Response(Buffer.from('this is not a zip'), { status: 200 }) : undefined));
     process.env.SURFCORE_UPDATE_NO_SPAWN = '1';
