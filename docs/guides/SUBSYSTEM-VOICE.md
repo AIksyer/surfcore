@@ -693,7 +693,7 @@ voice.enabled 检查（仅这里，底层不查）          src/bridge.js:2323
 |---|---|---|
 | `[server] host/port/token` | 监听地址/端口/鉴权 | `token=""` = 不鉴权（只 bind 回环） |
 | `[engine] primary/fallbacks` | 主引擎与兜底 | 本地 `gsv`→`piper`；云端 `cloud`→`piper` |
-| `[engine] cloud_app_id/cloud_access_key/cloud_resource` | 火山凭据与资源 | `resource` 必须是 `seed-icl-2.0`，否则 403/55000000（`<语音工程>/packages/voice-cloud/README.md:40`、`:50`） |
+| `[engine] cloud_app_id/cloud_access_key/cloud_resource` | 火山凭据与资源 | `resource` 必须是 `seed-icl-2.0`，否则 403/55000000（`<语音工程>/packages/voice-cloud/README.md:40`、`:50`）；**新装时安装流程会清空前两项**（`stripCloudCredentials()`/`ensurePackConfig()`），用户必须自己填，重装保留已填的（PITFALLS #79） |
 | `[voice] default` / `[voice.characters]` | 默认音色与角色映射 | `xiaoyu` 在两个包里指向不同音色 |
 | `[limits] max_chars` | 单次文本上限 | 默认 2000；QQ 侧另有 120 字限制 |
 | `[cache] max_mb` | 服务端缓存上限 | 本地 1024 / 云端 512 |

@@ -150,6 +150,16 @@ const tests = [
   // 语音包默认安装源（2026-10-26）：必须从仓库位置解析、不许硬编码盘符，
   // 且 8765/8767 两个端口与启停脚本名不能漂移（语音路由全靠它们）。
   'test-voice-packs-default.mjs',
+  // 离线语音包导入：校验/复制/配置保留/pyvenv 改写/回滚边界（临时夹具，不碰真实包）。
+  'test-voice-pack-import.mjs',
+  // 云端语音包凭据边界（2026-10-29）：新装必须清空预置的火山 AppID/AccessKey，
+  // 重装保留用户自己填的；没配好时 start() 要拒绝并指路（PITFALLS #79）。
+  'test-voice-cloud-credentials.mjs',
+  // 主人提问回答编码（2026-10-29）：DSH 单选不允许 selected+custom 并存 →
+  // 单选走 custom-only、多选保留 selected；[仅主人] 只收窄谁能答，不是授权凭证。
+  'test-question-answers.mjs',
+  // 主人特权操作审计（2026-10-29）：1MB×5 轮转、跨文件读尾、写入失败可见、90 天清理。
+  'test-owner-audit.mjs',
   // 版本号单一真相：根/插件 package.json 一致、无硬编码、CHANGELOG 有当前版本。
   'test-version.mjs',
   // B站分享去重：新鲜池空时不得回退旧素材（2026-10-26 修复的"同一条反复发"）。

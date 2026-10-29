@@ -32,16 +32,16 @@ function test(name, run) {
 }
 
 const CARD = {
-  qqNickname: '示例小肥鱼',
-  qqUin: 1000000001,
-  biliName: '示例小肥鱼',
-  biliMid: 1000000003,
+  qqNickname: '卡哇伊的小肥鱼',
+  qqUin: 3287064288,
+  biliName: '卡哇伊的小肥鱼',
+  biliMid: 1483638708,
   personaName: '小咪',
 };
 
 // ── 打码 / 收敛 ─────────────────────────────────────────────────────────────
-test('QQ 号打码：B站 侧只拿到 100****001', () => {
-  assert.equal(maskQqUin('1000000001'), '100****001');
+test('QQ 号打码：B站 侧只拿到 328****288', () => {
+  assert.equal(maskQqUin('3287064288'), '328****288');
   assert.equal(maskQqUin('123456'), '1****6');
   assert.equal(maskQqUin('abc'), '');
   assert.equal(maskQqUin(''), '');
@@ -49,10 +49,10 @@ test('QQ 号打码：B站 侧只拿到 100****001', () => {
 
 test('数字类型的 QQ 号 / mid 也能收进卡里；非法值留空', () => {
   const card = normalizeSelfCard(CARD);
-  assert.equal(card.qqUin, '1000000001');
-  assert.equal(card.qqUinMasked, '100****001');
-  assert.equal(card.biliMid, '1000000003');
-  assert.equal(card.biliSpace, 'https://space.bilibili.com/1000000003');
+  assert.equal(card.qqUin, '3287064288');
+  assert.equal(card.qqUinMasked, '328****288');
+  assert.equal(card.biliMid, '1483638708');
+  assert.equal(card.biliSpace, 'https://space.bilibili.com/1483638708');
   assert.equal(normalizeSelfCard({ qqUin: '12' }).qqUin, '', '太短的不是 QQ 号');
   assert.equal(normalizeSelfCard({ biliMid: 'x' }).biliMid, '');
   assert.equal(normalizeSelfCard({ qqNickname: 'a\nb' }).qqNickname, 'a b', '换行压成空格');
@@ -70,10 +70,10 @@ test('空卡不注入，避免刷一段空话', () => {
 test('B站 侧自我卡：有 QQ 锚点、QQ 号打码、带隐私句', () => {
   const block = buildSelfIdentityBlock(CARD, { platform: 'bili' });
   assert.match(block, /【你是谁 · 同一副人格/);
-  assert.match(block, /昵称「示例小肥鱼」/);
-  assert.match(block, /UID 1000000003/);
+  assert.match(block, /昵称「卡哇伊的小肥鱼」/);
+  assert.match(block, /UID 1483638708/);
   assert.match(block, /328\*\*\*\*288/, 'QQ 号要打码');
-  assert.ok(!block.includes('1000000001'), 'B站 侧不能出现完整 QQ 号');
+  assert.ok(!block.includes('3287064288'), 'B站 侧不能出现完整 QQ 号');
   assert.match(block, /QQ 资料卡/);
   assert.match(block, /【隐私】/);
   assert.match(block, /人格名「小咪」/);
@@ -81,18 +81,18 @@ test('B站 侧自我卡：有 QQ 锚点、QQ 号打码、带隐私句', () => {
 });
 
 test('B站 侧：README 里那种「只知道 B站 昵称」的旧配置也能用', () => {
-  const block = buildSelfIdentityBlock({ biliName: '示例小肥鱼', biliMid: '1000000003' }, { platform: 'bili' });
-  assert.match(block, /space\.bilibili\.com\/1000000003/);
+  const block = buildSelfIdentityBlock({ biliName: '卡哇伊的小肥鱼', biliMid: '1483638708' }, { platform: 'bili' });
+  assert.match(block, /space\.bilibili\.com\/1483638708/);
   assert.match(block, /看图先认自己/);
 });
 
 // ── QQ 侧：同一张卡（保留给以后接更多平台用）────────────────────────────────
 test('QQ 侧自我卡：完整 QQ 号 + B站 锚点 + @ 规则', () => {
   const block = buildSelfIdentityBlock(CARD, { platform: 'qq' });
-  assert.match(block, /QQ 1000000001/);
+  assert.match(block, /QQ 3287064288/);
   assert.match(block, /B站上的你/);
-  assert.match(block, /space\.bilibili\.com\/1000000003/);
-  assert.match(block, /@示例小肥鱼/);
+  assert.match(block, /space\.bilibili\.com\/1483638708/);
+  assert.match(block, /@卡哇伊的小肥鱼/);
   assert.doesNotMatch(block, /【隐私】/, 'QQ 侧不需要 B站 的隐私句');
 });
 
@@ -128,10 +128,10 @@ test('self-identity.json 读写：缺文件/坏文件都当「没配」，不抛
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'self-identity-'));
   try {
     assert.deepEqual(readQqSelfIdentity(dir), { nickname: '', userId: '', updatedAt: '' }, '缺文件');
-    fs.writeFileSync(selfIdentityPath(dir), JSON.stringify({ nickname: '示例小肥鱼', userId: '1000000001', updatedAt: '2026-10-23T00:00:00.000Z' }));
+    fs.writeFileSync(selfIdentityPath(dir), JSON.stringify({ nickname: '卡哇伊的小肥鱼', userId: '3287064288', updatedAt: '2026-10-23T00:00:00.000Z' }));
     const read = readQqSelfIdentity(dir);
-    assert.equal(read.nickname, '示例小肥鱼');
-    assert.equal(read.userId, '1000000001');
+    assert.equal(read.nickname, '卡哇伊的小肥鱼');
+    assert.equal(read.userId, '3287064288');
     fs.writeFileSync(selfIdentityPath(dir), '{坏 json');
     assert.equal(readQqSelfIdentity(dir).nickname, '', '坏文件不能炸 B站 唤醒');
     fs.writeFileSync(selfIdentityPath(dir), JSON.stringify({ nickname: 'x', userId: 'abc' }));

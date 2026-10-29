@@ -21,7 +21,7 @@ fs.mkdirSync(tempState, { recursive: true });
 fs.writeFileSync(path.join(tempRoot, 'src', 'bridge.js'), '// fixture\n');
 fs.writeFileSync(path.join(tempRoot, 'config.json'), JSON.stringify({
   ownerQQ: '10001',
-  allow: { private: ['10001'], groups: ['100000004'] },
+  allow: { private: ['10001'], groups: ['767098733'] },
   biliBridge: {
     enabled: true,
     share: { enabled: true, times: ['09:00'], groups: [], gapMs: 4000, card: true, cardMode: 'miniapp' },
@@ -110,7 +110,7 @@ try {
   bili.dynamics = { enabled: true, gapMin: 15, kinds: { ...bili.dynamics.kinds, best: { slot: 7, minLen: 30, maxLen: 120, prefix: '【早】' } } };
   const qq = readJson(qqFile);
   qq.biliBridge.share.times = ['20:00', '8:00', '99:99'];
-  qq.biliBridge.share.groups = ['100000004'];
+  qq.biliBridge.share.groups = ['767098733'];
   qq.biliBridge.share.gapMs = 1234;
   qq.biliBridge.share.cardMode = 'off';
   const saved = await invoke('POST', '/config', { bili, qq });
@@ -130,7 +130,7 @@ try {
   const diskQq = readJson(qqFile);
   assert.deepEqual(diskQq.biliBridge.share.times, ['08:00', '20:00'], '时间点要规范化/排序，非法项丢弃');
   assert.equal(diskQq.biliBridge.share.gapMs, 1234);
-  assert.deepEqual(diskQq.biliBridge.share.groups, ['100000004']);
+  assert.deepEqual(diskQq.biliBridge.share.groups, ['767098733']);
   assert.equal(diskQq.biliBridge.share.cardMode, 'off', '卡片样式要落盘');
   assert.equal(diskQq.biliBridge.share.card, false, 'card 是派生值：off 时必须是 false');
 

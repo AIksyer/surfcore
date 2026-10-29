@@ -240,6 +240,9 @@ window.__ModuleLoader__.load({
       if (!res.ok) {
         const error = new Error(data?.error || `HTTP ${res.status}`);
         error.status = res.status;
+        error.code = data?.code || '';
+        error.hint = data?.hint || '';
+        error.missing = Array.isArray(data?.missing) ? data.missing : [];
         error.data = data;
         throw error;
       }
@@ -438,7 +441,50 @@ window.__ModuleLoader__.load({
     // 为什么放在最上面：用户要求管理员的 QQ 号与 B站 UID 默认是同一个人，
     // 这是比「鱼群保护 / 作息」更基础的身份设置。两个标签页改的是同一个
     // unified.admin，保存时由宿主投影到 qq.ownerQQ 与 bili.owner.mid。
-    function AdminCard({ admin, onChange, qqPrivate = [], qqAllowAll = false }) {
+    // 主人特权操作审计：只读桥接写好的 state/owner-audit.jsonl。
+    function AuditModal({ onClose, toast }) {
+      const [data, setData] = useState(null);
+      const [err, setErr] = useState("");
+      const [busy, setBusy] = useState(false);
+      const load = async () => {
+        try { setData(await api("/owner-audit?limit=50")); setErr(""); }
+        catch (e) { setErr(e.message); }
+      };
+      useEffect(() => { load(); }, []);
+      const mask = (id) => String(id ?? "").replace(/^(\d{3})\d+(\d{2})$/, "$1***$2");
+      const openFolder = async () => {
+        setBusy(true);
+        try {
+          const r = await api("/owner-audit/open", { method: "POST", body: { action: "open" } });
+          toast?.(r.ok ? "✓ 已打开所在文件夹" : `✗ ${r.error || "打不开文件夹"}`);
+        } catch (e) { toast?.(`✗ ${e.message}`); }
+        finally { setBusy(false); }
+      };
+      const entries = Array.isArray(data?.entries) ? data.entries : [];
+      return h("div", { className: "qbw-modal-backdrop", onClick: (e) => { if (e.target === e.currentTarget) onClose?.(); } },
+        h("div", { className: "qbw-modal", style: { maxWidth: "760px", maxHeight: "82vh", overflow: "auto" } },
+          h("h3", null, "管理操作记录",
+            h("span", { style: { fontSize: "11px", opacity: 0.6, marginLeft: "8px" } }, "最近 50 条 · 只读")),
+          err ? h("p", { style: { color: "#e66" } }, err) : null,
+          data?.health && data.health.writable === false
+            ? h("p", { style: { color: "#e6a23c" } }, `⚠️ 审计写入异常：${data.health.lastError || "未知错误"}`)
+            : null,
+          entries.length
+            ? h("div", { style: { fontSize: "12px", lineHeight: "18px" } },
+              entries.slice().reverse().map((e, i) => h("div", { key: i, style: { borderBottom: "1px solid rgba(127,127,127,.18)", padding: "5px 0" } },
+                h("div", null, h("b", null, e.event || "?"), " · ", new Date(e.at).toLocaleString("zh-CN", { hour12: false })),
+                h("div", { style: { opacity: 0.8 } },
+                  `操作者：${e.actor?.isOwner ? "主人" : "群友"} ${mask(e.actor?.id)} · 授权：${e.auth?.rule || "—"}/${e.auth?.decision || "—"} · 结果：${e.result?.ok ? "成功" : (e.result?.errorCode || "失败")}`),
+                e.ref?.session ? h("div", { style: { opacity: 0.55 } }, `关联：${e.ref.session}${e.ref.role ? " · " + e.ref.role : ""}`) : null)))
+            : h("p", { className: "qbw-hint" }, "还没有记录。"),
+          h("div", { className: "qbw-actions" },
+            h(Btn, { kind: "qbw-btn2", onClick: load, disabled: busy }, "刷新"),
+            h(Btn, { kind: "qbw-btn2", onClick: openFolder, disabled: busy }, "打开所在文件夹"),
+            h(Btn, { kind: "qbw-btn2", onClick: onClose }, "关闭"))));
+    }
+
+    function AdminCard({ admin, onChange, qqPrivate = [], qqAllowAll = false, toast }) {
+      const [auditOpen, setAuditOpen] = useState(false);
       const value = admin && typeof admin === "object" ? admin : {};
       const set = (key, next) => onChange({ ...value, [key]: next });
       const configured = Boolean(value.qq || value.biliMid || value.biliName);
@@ -504,7 +550,10 @@ window.__ModuleLoader__.load({
           : null,
         configured && !aligned
           ? h("div", { className: "qbw-warnbox" }, "⚠️ 只填了一边：QQ 和 B站 要分别是同一个人的两个号，两边才都认得出。")
-          : null);
+          : null,
+        h("div", { className: "qbw-actions", style: { marginTop: "8px" } },
+          h(Btn, { kind: "qbw-btn3", onClick: () => setAuditOpen(true) }, "管理操作记录（最近 50 条）")),
+        auditOpen ? h(AuditModal, { onClose: () => setAuditOpen(false), toast }) : null);
     }
 
     // ── QQ 白名单（群 / 人）──────────────────────────────────────────────────
@@ -1241,6 +1290,27 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
               working ? "更新中…" : `立即更新（${selected.size}）`))));
     }
 
+    // 通用错误报告弹窗（AGENTS 1.7）：失败必须可见 + 给下一步。
+    // 只在"用户必须知道并做个选择"的失败上用；普通提示仍用 toast。
+    function ErrorModal({ title, message, hint, tried, actions = [], disabled, onClose }) {
+      return h("div", { className: "qbw-modal-backdrop", onClick: (e) => { if (e.target === e.currentTarget) onClose?.(); } },
+        h("div", { className: "qbw-modal" },
+          h("h3", null, "⚠️ " + (title || "操作失败")),
+          message ? h("p", null, message) : null,
+          hint ? h("p", { className: "qbw-hint" }, hint) : null,
+          (tried || []).length
+            ? h("details", { style: { marginTop: "4px" } },
+              h("summary", { style: { cursor: "pointer", fontSize: "12px", opacity: 0.8 } }, `试过 ${tried.length} 个位置（点开看）`),
+              h("ul", { style: { margin: "6px 0 0", paddingLeft: "18px", fontSize: "11.5px", lineHeight: "17px", wordBreak: "break-all" } },
+                tried.map((p, i) => h("li", { key: i }, p))))
+            : null,
+          h("div", { className: "qbw-actions" },
+            ...(actions || []).map((a) => h(Btn, {
+              key: a.label, ...(a.kind ? { kind: a.kind } : {}), disabled: disabled || a.disabled, onClick: a.onClick,
+            }, a.label)),
+            h(Btn, { kind: "qbw-btn2", onClick: onClose }, "关闭"))));
+    }
+
     function OverviewTab({ overview, reload, busy, setBusy, toast, unified, setUnified, goTab }) {
       const bridge = overview?.bridge ?? {};
       const bili = overview?.bili ?? {};
@@ -1255,6 +1325,7 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
       // 检查在插件里做（git fetch，只读）；界面只负责展示与确认。
       const updates = overview?.updates ?? {};
       const [updateOpen, setUpdateOpen] = useState(false);
+      const [snowError, setSnowError] = useState(null);
       const [autoPrompted, setAutoPrompted] = useState(false);
       useEffect(() => {
         if (!autoPrompted && updates?.showPrompt) {
@@ -1276,17 +1347,41 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
           return null;
         } finally { setBusy(""); }
       };
-      const detectSnowLuma = async () => {
+      // pickedPath 为空 = 在常见位置里猜；点了「浏览…」就把用户选的路径传进去验证并保存。
+      const detectSnowLuma = async (pickedPath = "") => {
         setBusy("detect-snowluma");
         try {
-          const result = await api("/bridge", { method: "POST", body: { action: "detect-snowluma" } });
-          toast(result.ok ? `✓ ${result.message}` : `✗ ${result.error ?? "没找到 SnowLuma"}`);
-          if (result.ok) reload();
+          const body = { action: "detect-snowluma", ...(pickedPath ? { path: pickedPath } : {}) };
+          const result = await api("/bridge", { method: "POST", body });
+          if (result.ok) {
+            toast(`✓ ${result.message}`);
+            await reload();
+          } else {
+            // 失败必须弹出来（不能只 toast 一下就没）；弹窗里直接给「浏览…」和下载页两个下一步。
+            setSnowError({
+              title: result.title || "没找到 SnowLuma",
+              message: result.error || "没找到 SnowLuma",
+              hint: result.hint || "点「浏览…」选 SnowLuma2 解压出来的根目录（里面有 app）。",
+              tried: Array.isArray(result.tried) ? result.tried : [],
+            });
+          }
         } catch (error) {
-          toast(`✗ ${error.message}`);
+          setSnowError({
+            title: "检测失败",
+            message: String(error?.message || error),
+            hint: "确认 DSH 插件正常（必要时重启 DSH）后重试；还不行就点「浏览…」直接选目录。",
+          });
         } finally {
           setBusy("");
         }
+      };
+      // 弹窗里的「浏览…」：选完直接重试检测。
+      const pickSnowLuma = async () => {
+        try {
+          const r = await browseNative("dir", "选择 SnowLuma2 解压出来的根目录（里面有 app）");
+          if (r.ok && r.path) await detectSnowLuma(String(r.path));
+          else if (!r.cancelled) toast(`✗ ${r.error || "打不开选择框"}`);
+        } catch (e) { toast(`✗ ${e.message}`); }
       };
       const act = async (action) => {
         setBusy(action);
@@ -1401,8 +1496,10 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
               h("div", { className: "qbw-kv" }, h("span", null, "当前安装目录"), h("span", null, snow.launcherPath || "未设置")),
               h("div", { className: "qbw-actions" },
                 h(Btn, { kind: "qbw-btn2", onClick: () => window.open(snow.downloadUrl || "https://github.com/SnowLuma/SnowLuma/releases/latest", "_blank", "noopener") }, "打开官方下载页"),
-                h(Btn, { onClick: detectSnowLuma, disabled: !!busy }, "检测已安装的 SnowLuma"),
+                h(Btn, { onClick: () => detectSnowLuma(), disabled: !!busy }, "检测已安装的 SnowLuma"),
+                h(Browse, { mode: "dir", title: "选择 SnowLuma2 解压出来的根目录（里面有 app）", onPick: (picked) => detectSnowLuma(picked) }),
                 h(Btn, { kind: "qbw-btn2", onClick: () => act("start-snowluma"), disabled: !!busy }, "只打开 SnowLuma")),
+              h("div", { className: "qbw-hint" }, "检测只会在常见位置里猜。装在别处（例如 D:\\软件\\SnowLuma2）就点「浏览…」自己选根目录（里面有 app）；选 app 目录或 app\\launcher.bat 也能识别。"),
               h("div", { className: "qbw-hint" }, "SurfCore 只负责检测、打开和查看连接状态；SnowLuma2 本体按 EULA 不随插件分发，安装与扫码仍需你完成。")),
             h("div", { className: "qbw-card" },
               h("h4", null, "扩展与平台"),
@@ -1415,6 +1512,18 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
             setBusy("backup");
             try { const r = await api("/diagnostics", { method: "POST", body: { action: "backup" } }); toast(`✓ 已备份 ${r.created?.length ?? 0} 个文件`); } catch (e) { toast(`✗ ${e.message}`); } finally { setBusy(""); }
           }, disabled: !!busy }, "立即备份配置")),
+        snowError ? h(ErrorModal, {
+          title: snowError.title,
+          message: snowError.message,
+          hint: snowError.hint,
+          tried: snowError.tried,
+          disabled: !!busy,
+          actions: [
+            { label: "浏览…选择目录", onClick: async () => { setSnowError(null); await pickSnowLuma(); } },
+            { label: "打开官方下载页", kind: "qbw-btn2", onClick: () => window.open(snow.downloadUrl || "https://github.com/SnowLuma/SnowLuma/releases/latest", "_blank", "noopener") },
+          ],
+          onClose: () => setSnowError(null),
+        }) : null,
         updateOpen ? h(UpdatesModal, {
           status: updates,
           toast,
@@ -1937,7 +2046,7 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           running: Boolean(overview?.bridge?.running || overview?.bridge?.ok),
           overview,
         }),
-        h(AdminCard, { admin, onChange: setAdmin, qqPrivate: cfg?.allow?.private ?? [], qqAllowAll: cfg?.allowAllWhenEmpty === true }),
+        h(AdminCard, { admin, onChange: setAdmin, qqPrivate: cfg?.allow?.private ?? [], qqAllowAll: cfg?.allowAllWhenEmpty === true, toast }),
         h(WhitelistCard, {
           allow: cfg?.allow ?? {},
           allowAll: cfg?.allowAllWhenEmpty === true,
@@ -2658,7 +2767,7 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           running: Boolean(overview?.scheduler?.running),
           overview,
         }),
-        h(AdminCard, { admin, onChange: setAdmin, qqPrivate, qqAllowAll }),
+        h(AdminCard, { admin, onChange: setAdmin, qqPrivate, qqAllowAll, toast }),
         h("div", { className: "qbw-card", style: { marginBottom: "10px" } },
           h("h4", null, "B站 账号"),
           h("div", { className: "qbw-kv" }, h("span", null, "登录态"), h("span", null, bili.available ? `记忆已生成 · ${bili.briefChars ?? 0} 字` : "暂无记忆（先扫码登录）")),
@@ -3151,19 +3260,56 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
         finally { setBusy(false); }
       };
 
+      const downloadSample = async () => {
+        setBusy(true); setMsg("下载参考音频…");
+        try {
+          const res = await fetch(`${API}/voice/packs/sample?id=voice-cloud`, { headers: { accept: "audio/wav" } });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const blob = await res.blob();
+          const disp = res.headers.get("content-disposition") || "";
+          const m = /filename\*=UTF-8''([^;]+)/i.exec(disp);
+          const name = m ? decodeURIComponent(m[1]) : "小语-参考音频19秒.wav";
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = name;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 10000);
+          setMsg(`✓ 已开始下载：${name}`);
+        } catch (e) {
+          setMsg(`下载失败：${e.message}；可点「打开所在目录」手动复制`);
+        } finally { setBusy(false); }
+      };
+
+      const openSampleFolder = async () => {
+        setBusy(true); setMsg("打开目录…");
+        try {
+          const r = await api("/voice/packs/sample-open", { method: "POST", body: { id: "voice-cloud" } });
+          if (!r.ok) throw new Error(r.error || "打开目录失败");
+          setMsg(`✓ 已打开：${r.path || r.dir || ""}`);
+        } catch (e) {
+          setMsg(`打开目录失败：${e.message}`);
+        } finally { setBusy(false); }
+      };
+
       const row = (label, node) => h("div", { style: { display: "flex", gap: "8px", alignItems: "center", marginTop: "6px", flexWrap: "wrap" } },
         h("span", { style: { width: "96px", fontSize: "13px" } }, label), node);
 
-      return h("div", { style: { marginTop: "14px", padding: "12px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px" } },
+      return h("div", { id: "surfcore-cloud-voice-form", style: { marginTop: "14px", padding: "12px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px" } },
         h(CloudStats, null),
         h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginTop: "12px" } },
           h("strong", null, "云端包：密钥与音色"),
           h("span", { style: { fontSize: "12px", opacity: 0.75 } }, cfg && cfg.configured ? "已配置（可随时修改）" : "未配置 —— 填完才能用")),
         h("ol", { style: { fontSize: "12px", margin: "8px 0", paddingLeft: "20px", lineHeight: "1.7", opacity: 0.8 } },
-          h("li", null, h("a", { href: "/dsh-surfcore/api/voice/packs/sample?id=voice-cloud", target: "_blank", rel: "noreferrer" }, "下载参考音频"), "（19 秒，包里自带，不用自己录）"),
+          h("li", null,
+            h(Btn, { kind: "qbw-btn2", disabled: busy, onClick: downloadSample }, "下载参考音频"),
+            "（19 秒，包里自带，不用自己录） ",
+            h(Btn, { kind: "qbw-btn2", disabled: busy, onClick: openSampleFolder }, "打开所在目录")),
           h("li", null, h("a", { href: "https://console.volcengine.com/speech/service/8", target: "_blank", rel: "noreferrer" }, "打开火山引擎控制台 ↗"), " → 语音技术 → 声音复刻 → 上传 wav → 训练，拿到 S_xxxxxxxx"),
           h("li", null, "把下面三项填进来，点「保存」，再点「测试连接」")),
-        row("AppID", h("input", { type: "text", value: form.appId, placeholder: "例如 3773727341", onChange: (e) => setForm({ ...form, appId: e.target.value }), style: { width: "240px" } })),
+        row("AppID", h("input", { type: "text", value: form.appId, placeholder: "控制台「语音技术」页里的 AppID", onChange: (e) => setForm({ ...form, appId: e.target.value }), style: { width: "240px" } })),
         row("Access Key", h("input", { type: "password", value: form.accessKey, placeholder: cfg && cfg.hasAccessKey ? "已保存：" + cfg.accessKeyMasked + "（留空则不修改）" : "控制台里的 Access Key", onChange: (e) => setForm({ ...form, accessKey: e.target.value }), style: { width: "240px" } })),
         row("音色 ID", h("input", { type: "text", value: form.speaker, placeholder: "S_xxxxxxxx", onChange: (e) => setForm({ ...form, speaker: e.target.value }), style: { width: "240px" } })),
         h("div", { style: { display: "flex", gap: "8px", marginTop: "10px", alignItems: "center", flexWrap: "wrap" } },
@@ -3171,14 +3317,13 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           h(Btn, { kind: "qbw-btn2", disabled: busy, onClick: test }, "测试连接"),
           msg ? h("span", { style: { fontSize: "12px", opacity: 0.85 } }, msg) : null),
         h("div", { style: { fontSize: "12px", opacity: 0.65, marginTop: "6px" } },
-          "密钥只写在本机包内的 config.toml，不上传任何服务器。"));
+          "密钥只写在本机包内的 config.toml，不上传任何服务器。安装包不预置任何密钥，AppID 和 Access Key 都要自己填（别人的填进去会花别人的额度）。"));
     }
 
     function VoiceTab({ toast }) {
       const [packs, setPacks] = useState([]);
       const [packsDir, setPacksDir] = useState("");
       const [dirInput, setDirInput] = useState("");
-      const [adoptInput, setAdoptInput] = useState("");
       const [mirror, setMirror] = useState("");
       const [rules, setRules] = useState(null);
       const [err, setErr] = useState("");
@@ -3186,6 +3331,9 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
       const [pick, setPick] = useState("voice-local");
       const [switchMsg, setSwitchMsg] = useState("");
       const [msg, setMsg] = useState({});
+      const [importPick, setImportPick] = useState(null);
+      const [importErr, setImportErr] = useState(null);
+      const [importDone, setImportDone] = useState(null);
 
       const load = useCallback(async () => {
         try {
@@ -3200,6 +3348,13 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
         } catch (e) { setErr(e.message); }
       }, []);
       useEffect(() => { load(); }, [load]);
+      // 页面刷新/切回来时，导入仍在后台跑：自动轮询，不能只靠发起导入的那个调用栈。
+      useEffect(() => {
+        const active = (packs || []).some((p) => p.import && p.import.phase !== "完成" && p.import.phase !== "失败");
+        if (!active) return undefined;
+        const t = setInterval(() => { load(); }, 1500);
+        return () => clearInterval(t);
+      }, [packs, load]);
 
       const poll = useCallback(async (id, tries = 240) => {
         for (let i = 0; i < tries; i += 1) {
@@ -3216,8 +3371,106 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
         return "timeout";
       }, []);
 
+      const waitImport = async (id) => {
+        for (let i = 0; i < 900; i += 1) {
+          await new Promise((r) => setTimeout(r, 1000));
+          let r;
+          try { r = await api("/voice/packs"); } catch { continue; }
+          setPacks(r.packs || []);
+          const p = (r.packs || []).find((x) => x.id === id);
+          const im = p?.import;
+          if (!im) continue;
+          if (im.phase === "失败") {
+            if (im.code === "IMPORT_CANCELLED") {
+              if (toast) toast("已取消导入（旧包未动）");
+            } else {
+              setImportErr({ id, ...im });
+            }
+            await load();
+            return;
+          }
+          if (im.phase === "完成") {
+            setImportDone({ id, ...(im.result || {}) });
+            await load();
+            return;
+          }
+        }
+        setImportErr({ id, error: "导入进度长时间没有更新", hint: "检查桥接是否还在运行；如果文件仍在复制，稍等后刷新设置页。", code: "IMPORT_TIMEOUT" });
+      };
+
+      const startImportFlow = async (id) => {
+        setImportErr(null);
+        setImportDone(null);
+        let picked;
+        try {
+          picked = await browseNative("dir", `选择解压后的 ${id === "voice-local" ? "voice-local" : "voice-cloud"} 文件夹`);
+        } catch (e) {
+          setImportErr({ id, error: `选择框打不开：${e.message || e}`, hint: "可以手动把包放到设置页显示的安装目录后重启桥接；或检查是否在本机桌面运行。" });
+          return;
+        }
+        if (!picked?.ok) {
+          if (!picked?.cancelled) {
+            setImportErr({ id, error: picked?.error || "没有选到目录", hint: "重新点「导入离线包…」，选择解压出来的 voice-local / voice-cloud 文件夹。" });
+          }
+          return;
+        }
+        setBusyId("__import");
+        try {
+          const info = await api("/voice/packs/import-inspect", { method: "POST", body: { id, sourceDir: picked.path } });
+          setImportPick({ id, info });
+        } catch (e) {
+          setImportErr({ id, sourceDir: picked.path, error: e.message, code: e.code, hint: e.hint, missing: e.missing });
+        } finally {
+          setBusyId("");
+        }
+      };
+
+      const submitImport = async (allowUnverified = false) => {
+        const job = importPick;
+        if (!job) return;
+        setImportPick(null);
+        setBusyId("__import");
+        try {
+          await api("/voice/packs/import", { method: "POST", body: { id: job.id, sourceDir: job.info.sourceDir, allowUnverified } });
+          await waitImport(job.id);
+        } catch (e) {
+          if (e.code === "IMPORT_UNVERIFIED" && !allowUnverified) {
+            setImportPick({ ...job, unverified: true });
+          } else {
+            setImportErr({ id: job.id, sourceDir: job.info.sourceDir, error: e.message, code: e.code, hint: e.hint, missing: e.missing });
+          }
+        } finally {
+          setBusyId("");
+        }
+      };
+
+      const removeImportedSource = async (id, sourceDir) => {
+        if (!sourceDir) return;
+        if (!window.confirm(`删除导入用的源文件夹？\n\n${sourceDir}\n\n删除不影响 SurfCore 使用；zip 和父目录不会动。`)) return;
+        try {
+          const r = await api("/voice/packs/import-delete-source", { method: "POST", body: { id, sourceDir } });
+          setImportDone((d) => (d ? { ...d, sourceDir: null } : d));
+          if (toast) toast(`✓ 已删除源文件夹（释放 ${fmt(r.freedBytes || 0)}）`);
+          await load();
+        } catch (e) {
+          setImportErr({ id, error: e.message, code: e.code, hint: e.hint, missing: e.missing });
+        }
+      };
+
+      const removeImportBackup = async (id, backupDir) => {
+        if (!backupDir) return;
+        if (!window.confirm(`删除旧包备份？\n\n${backupDir}\n\n只有确认新包能正常启动/自检后才建议删除。`)) return;
+        try {
+          await api("/voice/packs/import-delete-backup", { method: "POST", body: { id, backupDir } });
+          setImportDone((d) => (d ? { ...d, backupDir: null } : d));
+          if (toast) toast("✓ 已删除旧包备份");
+          await load();
+        } catch (e) {
+          setImportErr({ id, error: e.message, code: e.code, hint: e.hint, missing: e.missing });
+        }
+      };
+
       const runningId = ((packs.filter((p) => p.running)[0]) || {}).id || "";
-      // 单选 + 一个按钮：没在跑就启动选中的那个；跑的就是选中的 → 停止
       const toggle = async () => {
         setBusyId("__switch"); setSwitchMsg("");
         try {
@@ -3242,13 +3495,22 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
             const done = await poll(id);
             setMsg((m) => ({
               ...m,
-              [id]: done === "ok" ? "✓ 安装完成"
+              [id]: done === "ok"
+                ? (id === "voice-cloud"
+                  ? "✓ 安装完成 — 下一步：在下方「云端包：密钥与音色」填 AppID / Access Key / 音色 ID，否则启动不了"
+                  : "✓ 安装完成")
                 : done === "failed" ? "✗ 安装失败：见上方进度条下方的原因"
                   : "⏳ 还在安装（依赖阶段可能要几十分钟）；卡住可以点「取消安装」再来",
             }));
           }
           else setMsg((m) => ({ ...m, [id]: "" }));
           await load();
+          if (action === "install" && id === "voice-cloud") {
+            // 装完直接滚到密钥表单：新装不预置任何凭据，这一步不做云端包就是死的。
+            setTimeout(() => {
+              try { document.getElementById("surfcore-cloud-voice-form")?.scrollIntoView({ behavior: "smooth", block: "start" }); } catch {}
+            }, 300);
+          }
         } catch (e) {
           setMsg((m) => ({ ...m, [id]: e.message }));
         } finally { setBusyId(""); }
@@ -3272,7 +3534,7 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
               : p.running
                 ? ((p.external ? "● 运行中（外部目录）" : "● 运行中")
                   + (p.enginePort && p.engineUp === false ? " · ⚠️ 音色引擎未起" : ""))
-                : p.installed ? "○ 已安装 · 未运行" : "未安装"))),
+                : p.installed ? (p.needsCloudConfig ? "○ 已安装 · 待填云端密钥" : "○ 已安装 · 未运行") : "未安装"))),
         h("div", { style: { opacity: 0.8, margin: "6px 0", fontSize: "13px" } }, p.about && p.about.summary ? p.about.summary : ""),
         h("div", { style: { display: "flex", gap: "18px", flexWrap: "wrap", fontSize: "12px", opacity: 0.8 } },
           h("ul", { style: { margin: 0, paddingLeft: "18px" } }, ((p.about && p.about.pros) || []).map((x) => h("li", { key: x }, x))),
@@ -3289,7 +3551,9 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
                 const mins = Math.max(0, Math.round((Date.now() - Number(p.install.startedAt || Date.now())) / 60000));
                 const tail = String(p.install.logTail || "").split(String.fromCharCode(10)).filter(Boolean).pop() || "";
                 const phase = String(p.install.phase || "安装中");
-                return `${phase} · 已 ${mins} 分钟${tail ? ` · ${tail.slice(-60)}` : ""}`;
+                // 阶段名里已经带百分比时不再拼日志尾，避免出现"下载中 93%…下载中 93%"
+                const showTail = tail && !/%/.test(phase);
+                return `${phase} · 已 ${mins} 分钟${showTail ? ` · ${tail.slice(-60)}` : ""}`;
               })(),
               err: p.install?.error,
               indeterminate: !p.install || (/依赖|模型/.test(String(p.install.phase || '')) && Number(p.install.progress || 0) >= 99),
@@ -3305,13 +3569,31 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
                 } }, "取消安装"))
               : null)
           : null,
+        p.import && p.import.phase !== "完成" && p.import.phase !== "失败"
+          ? h("div", { style: { marginTop: "8px" } },
+            h(ProgressBar, { pct: p.import.progress, phase: p.import.phase, indeterminate: p.import.progress < 5 }),
+            h("div", { style: { marginTop: "6px" } },
+              h(Btn, { kind: "qbw-btn2", onClick: async () => {
+                try { await api("/voice/packs/import-cancel", { method: "POST", body: { id: p.id } }); if (toast) toast("正在取消导入…"); await load(); }
+                catch (e) { if (toast) toast(`✗ ${e.message}`); }
+              } }, "取消导入")))
+          : null,
+        p.import && p.import.phase === "失败" && p.import.error
+          ? h("div", { className: "qbw-err", style: { marginTop: "6px" } }, `导入失败：${p.import.error}`, p.import.hint ? ` — ${p.import.hint}` : "")
+          : null,
         p.installed && p.dir ? h("div", { style: { fontSize: "12px", marginTop: "4px", opacity: 0.7 } }, "路径：", h("code", null, p.dir)) : null,
+        p.id === "voice-cloud" && p.needsCloudConfig
+          ? h("div", { style: { fontSize: "12px", marginTop: "4px", opacity: 0.9, color: "#e6a23c" } },
+            "还没有密钥：安装包不预置任何凭据，请到本页下方「云端包：密钥与音色」填 AppID / Access Key / 音色 ID，否则云端语音启动不了。")
+          : null,
         p.enginePort && p.running && p.engineUp === false
           ? h("div", { style: { fontSize: "12px", marginTop: "4px", opacity: 0.85 } },
             `本地音色引擎（GPT-SoVITS ${p.enginePort}）还没起来：点「启动」会自动拉起，约 40 秒后再试；期间发语音会失败。`)
           : null,
         h("div", { style: { display: "flex", gap: "8px", marginTop: "8px", flexWrap: "wrap", alignItems: "center" } },
           !p.installed ? h(Btn, { disabled: busyId === p.id, onClick: () => act(p.id, "install") }, "安装（" + fmt(p.sizeBytes) + "）") : null,
+          h(Btn, { kind: "qbw-btn2", disabled: busyId === "__import" || (p.import && p.import.phase !== "完成" && p.import.phase !== "失败"), onClick: () => startImportFlow(p.id) },
+            p.installed ? "重新导入离线包…" : "导入离线包…"),
           p.external ? h("span", { style: { fontSize: "12px", opacity: 0.7 } }, p.dir ? `已在别处安装：${p.dir}` : "已在别处安装（端口在跑）") : null,
           p.external && p.dir
             ? h(Btn, { kind: "qbw-btn2", onClick: async () => {
@@ -3394,29 +3676,75 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           h("div", { style: { fontSize: "12px", opacity: 0.65, marginTop: "6px" } }, "当前生效：", h("code", null, packsDir || "（读不到）"))),
         h("div", { className: "qbw-hint", style: { marginTop: "10px" } },
           "⚠️ 改完语音总开关 / TTS / 发语音工具后，需要重启 DSH：工具列表在 MCP 进程启动时就固定了，不重启她还会说“没有语音入口”。"),
-        h("div", { style: { marginTop: "10px", padding: "10px 12px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px" } },
-          h("div", { style: { fontSize: "13px", fontWeight: 600 } }, "已有安装？手动指定包目录"),
-          h("div", { style: { fontSize: "12px", opacity: 0.75, marginTop: "2px" } },
-            "选到 voice-local / voice-cloud 那一层（里面有 config.toml）或它的上一级都可以；识别不到时用这个最稳。"),
-          h("div", { style: { display: "flex", gap: "8px", marginTop: "8px", flexWrap: "wrap" } },
-            h("input", { className: "qbw-input", value: adoptInput, placeholder: "D:/surfcore/state/voice-packs/voice-local", style: { flex: "1 1 320px" }, onChange: (e) => setAdoptInput(e.target.value) }),
-            h(Browse, { mode: "dir", title: "选择已安装的语音包目录", onPick: (v) => setAdoptInput(v) }),
-            h(Btn, { kind: "qbw-btn2", onClick: async () => {
-              const raw = String(adoptInput || "").trim();
-              if (!raw) { if (toast) toast("✗ 先选一个目录"); return; }
-              // 选到 .../voice-local 时，base 取上一级；选到 base 就原样用。
-              const norm = raw.split(String.fromCharCode(92)).join("/");
-              const base = /(voice-local|voice-cloud)$/i.test(norm) ? norm.replace(/[^/]+$/, "") : norm;
-              try {
-                await api("/config", { method: "POST", body: { qq: { voicePacks: { dir: base.split("\\").join("/") } } } });
-                if (toast) toast(`✓ 已指向 ${base}，识别中…`);
-                await load();
-              } catch (e) { if (toast) toast(`✗ ${e.message}`); }
-            } }, "用这个目录"))),
-
-
 
         cloud && cloud.installed ? h(CloudForm, { toast }) : null,
+
+        importPick ? h("div", { className: "qbw-modal-backdrop", onClick: (e) => { if (e.target === e.currentTarget) setImportPick(null); } },
+          h("div", { className: "qbw-modal" },
+            h("h3", null, "确认导入离线包"),
+            h("div", { style: { fontSize: "13px", lineHeight: "1.8" } },
+              h("div", null, "类型：", h("b", null, importPick.id === "voice-local" ? "本地语音包（voice-local）" : "云端语音包（voice-cloud）")),
+              h("div", null, "来源：", h("code", null, importPick.info.sourceDir)),
+              h("div", null, "目标：", h("code", null, importPick.info.targetDir || "标准安装目录")),
+              h("div", null, "大小：", fmt(importPick.info.sizeBytes)),
+              h("div", null, "版本：", importPick.info.version || "—"),
+              h("div", null, "完整性：", importPick.info.verified ? "manifest 已校验" : "未验证（没有 manifest 或未声明哈希）")),
+            (importPick.info.warnings || []).length
+              ? h("div", { className: "qbw-hint", style: { marginTop: "8px" } },
+                (importPick.info.warnings || []).map((w, i) => h("div", { key: i }, "⚠️ ", w.message, w.hint ? ` ${w.hint}` : "")))
+              : null,
+            h("div", { className: "qbw-actions" },
+              h(Btn, { kind: "qbw-btn2", onClick: () => setImportPick(null) }, "取消"),
+              h(Btn, { onClick: () => submitImport(!importPick.info.verified) },
+                importPick.info.verified ? "开始导入" : "仍要导入（未验证）")))
+        ) : null,
+
+        importErr ? h(ErrorModal, {
+          title: "离线包导入失败",
+          message: [
+            importErr.code ? `错误代码：${importErr.code}` : "",
+            importErr.error || "导入失败",
+            (importErr.missing || []).length ? `缺失：${importErr.missing.join("、")}` : "",
+          ].filter(Boolean).join("；"),
+          hint: importErr.hint || "重新选择目录；如果包不完整，重新下载后再导入。",
+          actions: [
+            importErr.id ? {
+              label: "重新选择目录",
+              onClick: () => { const id = importErr.id; setImportErr(null); startImportFlow(id); },
+            } : null,
+            importErr.id && importErr.code === "IMPORT_TARGET_RUNNING" ? {
+              label: "先停止语音包",
+              onClick: async () => {
+                try {
+                  await api("/voice/packs/stop", { method: "POST", body: { id: importErr.id } });
+                  const id = importErr.id; setImportErr(null); startImportFlow(id);
+                } catch (e) { if (toast) toast(`✗ ${e.message}`); }
+              },
+            } : null,
+          ].filter(Boolean),
+          onClose: () => setImportErr(null),
+        }) : null,
+
+        importDone ? h("div", { className: "qbw-modal-backdrop", onClick: (e) => { if (e.target === e.currentTarget) setImportDone(null); } },
+          h("div", { className: "qbw-modal" },
+            h("h3", null, "已导入，尚未验证运行"),
+            h("div", { style: { fontSize: "13px", lineHeight: "1.8" } },
+              h("div", null, "目标：", h("code", null, importDone.targetDir || "")),
+              importDone.sourceDir ? h("div", null, "源文件夹仍保留：", h("code", null, importDone.sourceDir)) : null,
+              importDone.backupDir ? h("div", null, "旧包备份：", h("code", null, importDone.backupDir)) : null,
+              h("div", null, "完整性：", importDone.verified ? "manifest 已校验" : "未验证")),
+            h("div", { className: "qbw-hint", style: { marginTop: "8px" } },
+              "文件已导入；语音服务能否正常出声还没有验证。请点「启动语音包」后再试一条语音；有旧包备份时，确认新包可用前不要删除。"),
+            h("div", { className: "qbw-actions" },
+              h(Btn, { onClick: async () => { setImportDone(null); await act(importDone.id, "start"); } }, "启动语音包"),
+              importDone.sourceDir && !importDone.alreadyInPlace
+                ? h(Btn, { kind: "qbw-btn2", onClick: () => removeImportedSource(importDone.id, importDone.sourceDir) }, "删除源文件夹")
+                : null,
+              importDone.backupDir
+                ? h(Btn, { kind: "qbw-btn2", onClick: () => removeImportBackup(importDone.id, importDone.backupDir) }, "删除旧备份")
+                : null,
+              h(Btn, { kind: "qbw-btn2", onClick: () => setImportDone(null) }, "关闭")))
+        ) : null,
 
         rules ? h("div", { style: { marginTop: "16px", paddingTop: "12px", borderTop: "1px solid var(--dsw-alias-border-l2)" } },
           h("strong", null, "触发规则"),

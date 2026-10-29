@@ -1,0 +1,83 @@
+# 发布流程（RELEASE）
+
+> 用途：把「改代码」和「发版本」拆成两件事，避免发布会话依赖记忆、或把半成品发出去。
+> 本文件是唯一权威；任何会话发布前都必须重读这里 + 现读仓库状态。
+
+## 一、会话分工（硬约束）
+
+| 会话 | 负责 | 禁止 |
+| --- | --- | --- |
+| **发布会话**（本会话） | 定版本号、写 CHANGELOG、同步公开仓库、打 tag、发 Release、验证线上 | 不在没测绿、没提交时发布 |
+| **编辑会话** | 改代码、加测试、写 `docs/cases/*.md`、本地提交 | **不改 `package.json` 的 `version`**、不打 tag、不推公开仓库、不跑发布脚本 |
+
+编辑会话完成一个修复后，向发布会话交接（**每次改动都要有，不能只在对话里说**）：
+
+```
+改了哪些文件 / 测过什么、结果如何 / 建议 patch 还是 minor / case 文档路径 /
+改动层级（实现层还是接口层；接口是否向后兼容）/ 完整逻辑与爆炸半径（case 里「完整逻辑」段）/
+失败路径（用户看到什么、下一步点什么、有没有失败分支测试）/ 还有什么没验证
+```
+
+## 二、发布前检查（发布会话逐条做，不许凭记忆）
+
+```bash
+cd D:\deepseekwork\surfcore
+git status --porcelain          # 必须干净，或有明确列出的待发文件
+git log --oneline -5            # 确认最近提交都是要发的
+node -e "console.log(require('./package.json').version)"   # 当前版本
+npm run test:audit              # 必须全绿（当前 81/81；新增/删除测试后同步这个数）
+cd plugins/surfcore && npm test # 必须 0 失败
+```
+
+然后向用户确认：**版本号 + 发布范围（哪些仓库）**。
+
+## 三、发布步骤
+
+1. **bump**（用户给定版本号时，检查是否与 `version.mjs` 建议一致）：
+   ```bash
+   node scripts/version.mjs bump patch   # 或 minor
+   ```
+2. **写 CHANGELOG**：`## [x.y.z] - YYYY-MM-DD`，`### 修复 / 新增 / 变更`，
+   末尾加 `> 调查记录：[标题](docs/cases/xxx.md)`。
+3. **提交本地**：`git add -A && git commit -m "release: vX.Y.Z（一句话）"`。
+4. **同步公开仓库** `D:\deepseekwork\opensource\surfcore`：
+   逐个 `cp` 本次改动的文件（不要整目录覆盖），提交、`git tag -a vX.Y.Z`。
+5. **推送**（`github.com:443` 常不通，用 GitHub Data API）：
+   ```bash
+   GH_TOKEN=... node /tmp/pub.mjs Mieksido/surfcore D:/deepseekwork/opensource/surfcore \
+     --since <上次公开仓库 commit> --message "release: vX.Y.Z（...）"
+   ```
+   注意：`/tmp/pub.mjs` 是 `scripts/publish-via-api.mjs` 的副本；中文路径必须 `core.quotePath=false`（脚本已处理）。
+6. **打 tag + 发 Release**（`api.github.com` 可用）：tag ref → release JSON（写在文件里，**不要用 bash 反引号**）。
+7. **验证**：`releases/latest` 返回新版本；`main` 的 commit 与本地一致；`git status` 干净。
+8. **记录**：在下面「发布记录」表里加一行。
+
+## 四、发布记录
+
+| 版本 | 日期 | 仓库 | main | Release |
+| --- | --- | --- | --- | --- |
+| v0.6.22 | 2026-10-28 | surfcore / surfvoicelocal / surfvoicecloud | d7f6b33 / d739c30 / f0d94d7 | https://github.com/Mieksido/surfcore/releases/tag/v0.6.22 |
+| v0.6.21 | 2026-10-28 | surfcore / surfvoicelocal / surfvoicecloud | e2bae36 / a1e24be / e914462 | https://github.com/Mieksido/surfcore/releases/tag/v0.6.21 |
+| v0.6.20 | 2026-10-28 | surfcore | 12975a3 | https://github.com/Mieksido/surfcore/releases/tag/v0.6.20 |
+| v0.6.19 | 2026-10-28 | surfcore | 28346fd | https://github.com/Mieksido/surfcore/releases/tag/v0.6.19 |
+
+> 更早版本见 GitHub Releases 页；本表只记最近几次，避免无限增长。
+
+## 五、已知坑（发布相关）
+
+1. **`github.com:443` 常被墙**：`git push` 会超时；用 `api.github.com`（Data API）推送，见上。
+2. **中文文件名**：`git diff --name-status` 默认转义路径 → 发布脚本必须 `-c core.quotePath=false`。
+3. **zip 通道更新是覆盖式**：`robocopy /MIR` 会删掉本地多出来的代码文件；用户本地修复必须先导出补丁。
+4. **git 通道是 `merge --ff-only`**：用户本地有提交/改动会被拦，必须先 `stash` 或 `reset --hard`。
+5. **token 不落文件**：`GH_TOKEN` 只在命令行环境变量里用，不写进任何提交或文档。
+6. **不要用 bash 反引号写 Release body**：反引号会被 shell 执行；把 JSON 写文件再传。
+7. **发布后必须验证线上**：只看到“推送成功”不算，要查 `releases/latest` 和 raw 文件。
+
+## 六、出错怎么回滚
+
+| 情况 | 处理 |
+| --- | --- |
+| 发错版本号、还没推送 | 本地 `git reset --hard HEAD~1`，重新 bump |
+| 已推送错误 tag | 删远端 tag + 重新打；Release 删除后重建 |
+| 公开仓库与本地不一致 | 以本地为准重新同步；不要反向覆盖本地 |
+| 用户升级出问题 | 先让用户回退到上一版 zip；定位后 hotfix 出下一版，不改旧 tag |

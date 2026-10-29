@@ -14,6 +14,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { wavDurationMs } from './voice-tts.js';
+import { stripCloudCredentials } from './voice-pack-secrets.js';
+import {
+  IMPORT_CODES,
+  ImportError,
+  inspectImportSource,
+  rewriteVenvConfig,
+  prepareConfig,
+  copyTree,
+  dirSize,
+  missingPackFiles,
+  validateConfigText,
+  renameWithRetry,
+  removeWithRetry,
+} from './voice-pack-import.js';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -260,8 +274,358 @@ async function fetchToLocal(cfg, id, src, destDir, onProgress = () => {}) {
   onProgress(100, '完成');
 }
 
+// ── 云端凭据边界（2026-10-29）──────────────────────────────────────────────
+//
+// 实现已抽到 voice-pack-secrets.js：安装、离线导入、测试共用同一份清洗规则；
+// 这里保留 re-export，旧调用方/测试不用改 import 路径。
+export { stripCloudCredentials } from './voice-pack-secrets.js';
+
+/**
+ * 装完后的 `config.toml`：仓库只带 `config.example.toml` 时复制一份；
+ * 新装一律清掉云端凭据（见上面的背景）。返回是否新建/是否清过，供进度条显示。
+ */
+export async function ensurePackConfig(dir, { hadOwnConfig = false } = {}) {
+  const file = path.join(dir, 'config.toml');
+  let created = false;
+  if (!(await exists(file))) {
+    const example = path.join(dir, 'config.example.toml');
+    if (!(await exists(example))) throw new Error('包里没有 config.toml，可能下载的是错的文件');
+    await fsp.copyFile(example, file);
+    created = true;
+  }
+  if (hadOwnConfig) return { created, sanitized: false, file };
+  const raw = await fsp.readFile(file, 'utf8');
+  const cleaned = stripCloudCredentials(raw);
+  if (cleaned !== raw) await fsp.writeFile(file, cleaned, 'utf8');
+  return { created, sanitized: cleaned !== raw, file };
+}
+
 export function createVoicePacks(cfg) {
   const activeInstalls = new Map(); // id → {progress, phase, startedAt, error}
+  const activeImports = new Map(); // id → 导入进度/错误（离线包复制与切换）
+
+  function importTarget(id) {
+    return path.join(packsDir(cfg), id);
+  }
+
+  function importSnapshot(rec) {
+    if (!rec) return null;
+    return {
+      progress: rec.progress,
+      phase: rec.phase,
+      startedAt: rec.startedAt,
+      error: rec.error || null,
+      code: rec.code || null,
+      hint: rec.hint || '',
+      missing: Array.isArray(rec.missing) ? rec.missing : [],
+      cancelled: Boolean(rec.cancelled),
+      sourceDir: rec.sourceDir,
+      targetDir: rec.targetDir,
+      backupDir: rec.backupDir || null,
+      verified: Boolean(rec.verified),
+      result: rec.result || null,
+    };
+  }
+
+  async function inspectImport(id, sourceDir) {
+    const m = manifests(cfg).find((x) => x.id === id);
+    if (!m) throw new ImportError(IMPORT_CODES.PACK_NOT_FOUND, `未知语音包：${id}`, { hint: '刷新设置页后重试。' });
+    return inspectImportSource({ id, sourceDir, targetDir: importTarget(id) });
+  }
+
+  async function checkFreeSpace(dir, need) {
+    try {
+      await fsp.mkdir(dir, { recursive: true });
+      const s = await fsp.statfs(dir);
+      const free = Number(s.bavail) * Number(s.bsize);
+      if (Number.isFinite(free) && free < need + 256 * 1024 * 1024) {
+        throw new ImportError(IMPORT_CODES.DISK_FULL, '磁盘空间不足，无法导入离线包', {
+          hint: `需要至少 ${(need / 1024 ** 3).toFixed(1)} GB，当前可用 ${(free / 1024 ** 3).toFixed(1)} GB。请清理磁盘，或把语音包安装目录换到空间更大的盘。`,
+          detail: { freeBytes: free, needBytes: need },
+        });
+      }
+    } catch (e) {
+      if (e instanceof ImportError) throw e;
+      // statfs 在个别文件系统上不可用：不阻塞导入，结构性错误仍会在复制时暴露。
+    }
+  }
+
+  async function startImport(id, { sourceDir, allowUnverified = false } = {}) {
+    const m = manifests(cfg).find((x) => x.id === id);
+    if (!m) throw new ImportError(IMPORT_CODES.PACK_NOT_FOUND, `未知语音包：${id}`, { hint: '刷新设置页后重试。' });
+    const prev = activeImports.get(id);
+    if (prev && prev.phase !== '完成' && prev.phase !== '失败') {
+      throw new ImportError('IMPORT_BUSY', '这个语音包正在导入中', {
+        hint: '等当前导入结束，或先点「取消导入」。',
+        status: 409,
+      });
+    }
+    if (prev) activeImports.delete(id);
+
+    const info = await inspectImport(id, sourceDir);
+    if (!info.verified && !allowUnverified) {
+      throw new ImportError(IMPORT_CODES.UNVERIFIED, '离线包没有完整性清单', {
+        hint: '该包未经完整性验证，可能不完整或被替换。确认来源可信后点「仍要导入」。',
+        status: 409,
+        detail: { warnings: info.warnings || [] },
+      });
+    }
+    const target = importTarget(id);
+    if (await probePort(m.port)) {
+      throw new ImportError(IMPORT_CODES.TARGET_RUNNING, '目标语音包正在运行，不能覆盖', {
+        hint: '先在设置页停止这个语音包，再重新导入。',
+        status: 409,
+        detail: { port: m.port, targetDir: target },
+      });
+    }
+    if (m.enginePort && await probePort(m.enginePort)) {
+      throw new ImportError(IMPORT_CODES.TARGET_RUNNING, '音色引擎仍在运行，不能覆盖', {
+        hint: `先停止本地音色引擎（端口 ${m.enginePort}），或点「先停止语音包」后再导入。`,
+        status: 409,
+        detail: { port: m.enginePort, targetDir: target },
+      });
+    }
+    const source = info.sourceDir;
+    const inPlace = path.resolve(source) === path.resolve(target);
+    if (!inPlace) await checkFreeSpace(path.dirname(target), info.sizeBytes);
+    const targetExists = await exists(target);
+    const oldConfigPath = targetExists && (await exists(path.join(target, 'config.toml')))
+      ? path.join(target, 'config.toml') : '';
+    if (oldConfigPath) {
+      let oldText = '';
+      try { oldText = await fsp.readFile(oldConfigPath, 'utf8'); } catch (e) {
+        throw new ImportError(IMPORT_CODES.CONFIG_INVALID, '读不到旧 config.toml，无法保留用户配置', {
+          hint: '先备份旧包并修复/删除旧 config.toml 后再导入；导入不会覆盖它。',
+          detail: { file: oldConfigPath, reason: String(e?.message || e) },
+        });
+      }
+      const bad = validateConfigText(oldText);
+      if (bad) {
+        throw new ImportError(IMPORT_CODES.CONFIG_INVALID, `旧 config.toml 格式不对（${bad}）`, {
+          hint: '旧配置不会被覆盖。请先备份并修复/删除旧 config.toml，再重新导入。',
+          detail: { file: oldConfigPath },
+        });
+      }
+    }
+    const rec = {
+      progress: 2,
+      phase: '校验通过',
+      startedAt: Date.now(),
+      error: null,
+      code: null,
+      hint: '',
+      missing: [],
+      cancelled: false,
+      sourceDir: source,
+      targetDir: target,
+      backupDir: null,
+      verified: info.verified,
+      result: null,
+    };
+    activeImports.set(id, rec);
+
+    (async () => {
+      let temp = '';
+      let switched = false;
+      try {
+        if (!inPlace) {
+          temp = path.join(packsDir(cfg), `.import-${id}-${Date.now()}`);
+          await copyTree(source, temp, {
+            onProgress: (pct, phase) => { rec.progress = pct; rec.phase = phase; },
+            isCancelled: () => rec.cancelled,
+          });
+          if (rec.cancelled) throw new ImportError(IMPORT_CODES.CANCELLED, '导入已取消', { hint: '没有改动旧包；可以重新导入。', status: 409 });
+          // 源目录若自带 config.toml，先立刻清掉凭据，避免临时目录里长时间留 key；
+          // 有旧配置时下一步 prepareConfig 会用用户旧配置覆盖它。
+          const tempConfig = path.join(temp, 'config.toml');
+          if (await exists(tempConfig)) {
+            const raw = await fsp.readFile(tempConfig, 'utf8').catch(() => '');
+            if (raw) await fsp.writeFile(tempConfig, stripCloudCredentials(raw), 'utf8');
+          }
+          rec.phase = '处理配置';
+          rec.progress = 78;
+          await prepareConfig(temp, oldConfigPath);
+          const missing = await missingPackFiles(id, temp);
+          if (missing.length) {
+            throw new ImportError(IMPORT_CODES.PACK_INCOMPLETE, '复制后的离线包不完整', {
+              hint: '重新下载完整离线包后再导入。',
+              missing,
+            });
+          }
+          if (rec.cancelled) throw new ImportError(IMPORT_CODES.CANCELLED, '导入已取消', { hint: '没有改动旧包；可以重新导入。', status: 409 });
+          rec.phase = '切换安装目录';
+          rec.progress = 94;
+          if (targetExists) {
+            rec.backupDir = `${target}.backup-${Date.now()}`;
+            await renameWithRetry(target, rec.backupDir);
+          }
+          await renameWithRetry(temp, target);
+          temp = '';
+          switched = true;
+          // 必须在 rename 之后改写：pyvenv.cfg 的 home 要指向最终目录，
+          // 指向 .import-* 临时目录的话，重命名后解释器直接找不到 runtime。
+          rec.phase = '修复 Python 环境';
+          rec.progress = 96;
+          await rewriteVenvConfig(target, { versions: id === 'voice-local' ? ['313', '312'] : ['313'] });
+        } else {
+          rec.phase = '修复 Python 环境（就地）';
+          rec.progress = 70;
+          await rewriteVenvConfig(target, { versions: id === 'voice-local' ? ['313', '312'] : ['313'] });
+          if (!oldConfigPath) {
+            rec.phase = '处理配置（就地）';
+            await prepareConfig(target, '');
+          }
+          switched = true;
+        }
+
+        const state = await readState(cfg);
+        state.packs = state.packs || {};
+        state.packs[id] = {
+          ...(state.packs[id] || {}),
+          enabled: true,
+          installedAt: new Date().toISOString(),
+          importedAt: new Date().toISOString(),
+          version: info.version || m.version,
+          importSource: inPlace ? null : source,
+          backupDir: rec.backupDir || null,
+          verified: Boolean(info.verified),
+        };
+        await writeState(cfg, state);
+        rec.phase = '完成';
+        rec.progress = 100;
+        rec.result = {
+          ok: true,
+          imported: !inPlace,
+          alreadyInPlace: inPlace,
+          sourceDir: source,
+          targetDir: target,
+          backupDir: rec.backupDir || null,
+          verified: Boolean(info.verified),
+          runtimeVerified: false,
+          version: info.version || m.version,
+        };
+      } catch (e) {
+        const err = e instanceof ImportError ? e : new ImportError(IMPORT_CODES.COPY_FAILED, String(e?.message || e), {
+          hint: '检查源目录、磁盘空间和文件占用后重试。',
+        });
+        rec.error = err.message;
+        rec.code = err.code;
+        rec.hint = err.hint;
+        rec.missing = err.missing;
+        rec.phase = '失败';
+        rec.progress = Math.min(rec.progress, 99);
+
+        if (temp) {
+          try { await removeWithRetry(temp); } catch (cleanup) {
+            rec.hint = `${rec.hint || ''}\n临时目录清理失败：${temp}（${String(cleanup?.message || cleanup)}）`.trim();
+          }
+        }
+        if (switched) {
+          try {
+            const failed = `${target}.failed-${Date.now()}`;
+            if (await exists(target)) await renameWithRetry(target, failed);
+            if (rec.backupDir) {
+              await renameWithRetry(rec.backupDir, target);
+              rec.backupDir = null;
+            }
+            rec.hint = `${rec.hint || ''}\n新包已验证失败，已回滚旧包。`.trim();
+          } catch (rollback) {
+            rec.code = IMPORT_CODES.ROLLBACK_FAILED;
+            rec.error = '导入失败，且旧包回滚失败';
+            rec.hint = `旧包备份在：${rec.backupDir || '（未知路径）'}。请先不要删除它，手动把备份改回 voice-${id === 'voice-local' ? 'local' : 'cloud'} 目录。原因：${String(rollback?.message || rollback)}`;
+          }
+        } else if (rec.backupDir) {
+          try {
+            await renameWithRetry(rec.backupDir, target);
+            rec.backupDir = null;
+          } catch (rollback) {
+            rec.code = IMPORT_CODES.ROLLBACK_FAILED;
+            rec.error = '导入失败，且旧包回滚失败';
+            rec.hint = `旧包备份在：${rec.backupDir}。请手动恢复，不要删除。原因：${String(rollback?.message || rollback)}`;
+          }
+        }
+      }
+    })();
+
+    return { ok: true, import: importSnapshot(rec) };
+  }
+
+  function cancelImport(id) {
+    const rec = activeImports.get(id);
+    if (!rec || rec.phase === '完成' || rec.phase === '失败') {
+      return { ok: false, error: '没有进行中的导入', code: 'IMPORT_NOT_RUNNING' };
+    }
+    rec.cancelled = true;
+    rec.phase = '取消中';
+    return { ok: true };
+  }
+
+  async function deleteImportSource(id, sourceDir) {
+    const state = await readState(cfg);
+    const recorded = state.packs?.[id]?.importSource || '';
+    const target = importTarget(id);
+    const source = path.resolve(String(sourceDir || ''));
+    if (!recorded || path.resolve(recorded) !== source) {
+      throw new ImportError(IMPORT_CODES.SOURCE_DELETE_REFUSED, '这个目录不是本次导入的源目录，已拒绝删除', {
+        hint: '只允许删除刚刚导入时使用的原始文件夹；其他目录请手动处理。',
+        status: 409,
+      });
+    }
+    if (source === path.resolve(target) || target.startsWith(source + path.sep)) {
+      throw new ImportError(IMPORT_CODES.SOURCE_DELETE_REFUSED, '源目录就是安装目录，不能删除', {
+        hint: '源目录与标准安装目录相同，不需要删除。',
+        status: 409,
+      });
+    }
+    if (!(await exists(target))) {
+      throw new ImportError(IMPORT_CODES.SOURCE_DELETE_REFUSED, '标准安装目录不存在，已拒绝删除源目录', {
+        hint: '先确认导入成功；旧包/新包异常时不要删除源文件。',
+        status: 409,
+      });
+    }
+    const freedBytes = await dirSize(source).catch(() => 0);
+    try {
+      await fsp.rm(source, { recursive: true, force: true });
+    } catch (e) {
+      throw new ImportError(IMPORT_CODES.SOURCE_DELETE_REFUSED, '删除源文件夹失败', {
+        hint: `关闭占用该文件夹的程序后重试；残留位置：${source}`,
+        status: 409,
+        detail: { path: source, reason: String(e?.message || e) },
+      });
+    }
+    delete state.packs[id].importSource;
+    await writeState(cfg, state);
+    return { ok: true, freedBytes };
+  }
+
+  async function deleteImportBackup(id, backupDir) {
+    const state = await readState(cfg);
+    const recorded = state.packs?.[id]?.backupDir || '';
+    const target = importTarget(id);
+    const backup = path.resolve(String(backupDir || ''));
+    if (!recorded || path.resolve(recorded) !== backup) {
+      throw new ImportError(IMPORT_CODES.BACKUP_DELETE_REFUSED, '这个路径不是本次导入的旧包备份，已拒绝删除', {
+        hint: '只允许删除导入时记录的备份目录。',
+        status: 409,
+      });
+    }
+    if (backup === path.resolve(target)) {
+      throw new ImportError(IMPORT_CODES.BACKUP_DELETE_REFUSED, '备份路径等于当前安装目录，已拒绝删除', { status: 409 });
+    }
+    try {
+      await fsp.rm(backup, { recursive: true, force: true });
+    } catch (e) {
+      throw new ImportError(IMPORT_CODES.BACKUP_DELETE_REFUSED, '删除旧包备份失败', {
+        hint: `关闭占用该目录的程序后重试；残留位置：${backup}`,
+        status: 409,
+        detail: { path: backup, reason: String(e?.message || e) },
+      });
+    }
+    delete state.packs[id].backupDir;
+    await writeState(cfg, state);
+    return { ok: true };
+  }
+
 
   async function statusOne(m) {
     const dir = packDir(cfg, m.id);
@@ -293,19 +657,30 @@ export function createVoicePacks(cfg) {
         const { child, ...rest } = rec;
         return { ...rest, logTail: String(rec.log || '').slice(-160) };
       })(),
+      import: importSnapshot(activeImports.get(m.id)),
     };
   }
 
   async function list() {
     const state = await readState(cfg);
     const packs = await Promise.all(manifests(cfg).map(statusOne));
+    // 云端包装好但凭据没填全：给设置页一个明确信号（新装不再预置任何凭据，见 PITFALLS #79）。
+    const withNeeds = await Promise.all(packs.map(async (p) => {
+      if (p.id !== 'voice-cloud' || !p.installed) return p;
+      const c = await readCloudConfig(p.id).catch(() => null);
+      return { ...p, needsCloudConfig: !c || !c.configured };
+    }));
     return {
       ok: true,
       packsDir: packsDir(cfg),
-      packs: packs.map((p) => ({
+      packs: withNeeds.map((p) => ({
         ...p,
         enabled: state.packs?.[p.id]?.enabled ?? false,
         installedAt: state.packs?.[p.id]?.installedAt ?? null,
+        importSource: state.packs?.[p.id]?.importSource ?? null,
+        backupDir: state.packs?.[p.id]?.backupDir ?? null,
+        importedAt: state.packs?.[p.id]?.importedAt ?? null,
+        verified: state.packs?.[p.id]?.verified ?? null,
       })),
     };
   }
@@ -355,6 +730,9 @@ async function install(id, { force = false, mirror = '', jobs = 0 } = {}) {
     // 异步跑，接口立刻返回，前端轮询 status 看进度
     (async () => {
       try {
+        // 装之前先看有没有用户自己的 config.toml：有就是重装（下面会原样保留），
+        // 没有就是新装 → 凭据一律清空（见 stripCloudCredentials 的背景）。
+        const hadOwnConfig = await exists(path.join(dir, 'config.toml'));
         // 保留 models/vendor/.venv/config.toml：断点续传的 .part 在这里，不能一起删。
         await clearPackKeepingAssets(dir);
         // 安装源：本地开发目录 / 本地 zip / http(s)。开发目录在用户机器上不存在，
@@ -380,13 +758,11 @@ async function install(id, { force = false, mirror = '', jobs = 0 } = {}) {
         } catch {}
         // 仓库里只有 config.example.toml（真实配置不入库）：装完先复制成 config.toml，
         // 否则 voxd 起不来、用户看到"包里没有 config.toml"。
-        if (!(await exists(path.join(dir, 'config.toml'))) && (await exists(path.join(dir, 'config.example.toml')))) {
-          await fsp.copyFile(path.join(dir, 'config.example.toml'), path.join(dir, 'config.toml'));
-          rec.phase = '生成配置';
-        }
-        if (!(await exists(path.join(dir, 'config.toml')))) {
-          throw new Error('包里没有 config.toml，可能下载的是错的文件');
-        }
+        // 新装还会清空预置凭据——打包者可能把自己的火山 key 留在了包里，
+        // 不能让用户拿我们的额度计费（PITFALLS #79）。
+        const conf = await ensurePackConfig(dir, { hadOwnConfig });
+        if (conf.created) rec.phase = '生成配置';
+        if (conf.sanitized) rec.phase = '清空预置凭据（需自己填密钥）';
         // 后置步骤：先拉模型/运行库（sha256 校验），再建 Python 环境（首次要几分钟）。
         const postScripts = (Array.isArray(m.postInstall) ? m.postInstall : (m.postInstall ? [m.postInstall] : []))
           .filter((x) => x);
@@ -505,6 +881,14 @@ async function install(id, { force = false, mirror = '', jobs = 0 } = {}) {
     if (!m) throw new Error(`未知语音包：${id}`);
     const dir = packDir(cfg, id);
     if (!(await exists(path.join(dir, 'config.toml')))) throw new Error('还没安装');
+    // 云端包：没填凭据就别启动——voxd 会起来，但每次合成都 401/403，
+    // 用户只会看到"启动成功、一说话就失败"。给一句能直接照做的提示。
+    if (id === 'voice-cloud') {
+      const conf = await readCloudConfig(id).catch(() => null);
+      if (!conf || !conf.configured) {
+        throw new Error('云端包还没填密钥：先在设置页「云端包：密钥与音色」填 AppID / Access Key / 音色 ID，再启动');
+      }
+    }
     // Python 环境缺失时直接给可操作的提示，别让用户看着"启动超时"猜。
     if (process.platform === 'win32' && !(await exists(path.join(dir, '.venv', 'Scripts', 'python.exe')))) {
       throw new Error('Python 环境还没装好：先点「卸载」再点「安装」重新装一次（会自动创建 .venv 并装依赖）');
@@ -814,5 +1198,5 @@ async function install(id, { force = false, mirror = '', jobs = 0 } = {}) {
     return { ok: true, ms: Date.now() - t0, bytes: buf.length, seconds, duration: seconds };
   }
 
-  return { list, install, remove, start, stop, activate, cleanPartial, cancelInstall, cloudConfig, readCloudConfig, cloudStats, test, sampleFile, setEnabled, manifests, packsDir };
+  return { list, install, remove, start, stop, activate, cleanPartial, cancelInstall, cloudConfig, readCloudConfig, cloudStats, test, sampleFile, setEnabled, manifests, packsDir, inspectImport, startImport, cancelImport, deleteImportSource, deleteImportBackup };
 }

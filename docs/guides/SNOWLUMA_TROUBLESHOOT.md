@@ -52,6 +52,12 @@ SnowLuma 的 WebUI/控制台端口**会漂移**（见过 5099、5100）。
 注意：`snowluma.launcherPath` 填**根目录**（里面有 `app`），`snowluma.homeDir` 填 `app` 目录
 （里面有 `config`）——填反了会「装好了但检测不到」（见 [case](../cases/2026-10-28-snowluma-detect.md)）。
 
+**2026-10-29 起**：概览页「检测已安装的 SnowLuma」右边有「浏览…」，直接选解压出来的根目录即可
+（选 `app` 目录、`app\launcher.bat` 或 `SnowLuma.exe` 也会自动归一到根目录）。
+检测顺序：手选路径 → 配置里的 `launcherPath`/`homeDir` → 环境变量 `SNOWLUMA_HOME`/`SNOWLUMA_DIR` →
+最后才猜常见位置（用户目录 / 桌面 / 下载 / `LOCALAPPDATA\Programs` / 仓库上一级 / `Program Files`）；
+认 `app\launcher.bat`、`launcher.bat`、`SnowLuma.exe`。放在中文/空格路径下仍可能影响注入（见上表第 6 条）。
+
 ## 四、为什么「有正在进行的任务，不让关」
 
 如果 SnowLuma 是在**某个会话里被启动的**（比如让 AI 帮你起），它就是那个会话的后台任务：

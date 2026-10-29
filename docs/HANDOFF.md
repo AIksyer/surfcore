@@ -5,6 +5,184 @@
 
 ---
 
+## 快照：2026-10-29 17:00–17:50（语音包离线导入 + local/cloud 候选包）
+
+### 用户要求
+
+> 「把 local 和 cloud 都准备好；导入失败要有明确报错与建议，避免静默错误。」
+
+### 改了什么
+
+| 改动 | 落点 |
+| --- | --- |
+| 离线包校验/复制/配置/环境修复 | 新增 `src/voice-pack-import.js`；`src/voice-pack-secrets.js`（凭据清洗抽出） |
+| 导入事务/进度/备份/回滚/删除源与备份 | `src/voice-packs.js`（`activeImports`、`inspectImport/startImport/...`） |
+| 桥接接口与结构化错误 | `src/bridge.js`：`import-inspect/import/import-cancel/import-delete-source/import-delete-backup` |
+| 设置页导入按钮、确认框、错误弹窗、进度 | `plugins/surfcore/lib/client.js`；删除旧「手动指定包目录」 |
+| 云端参考音频下载 | 原来 `<a target=_blank>` 被宿主拦 → fetch+Blob；加「打开所在目录」`sample-open`（`plugins/surfcore/lib/index.js`） |
+| 错误字段不再丢 | 插件 `api()` 保留 `code/hint/missing` |
+| 回归 | `scripts/test-voice-pack-import.mjs`（9 项），进 test:audit → **81/81** |
+
+### 候选离线包（POC）
+
+- 本地：`D:\surfcore-poc\release\voice-local-offline-v1.0.0-win-x64.zip`（4.7G）
+  - 微调 age12 权重 `models/age12/`，`logs/gsv/tts_infer.yaml` 相对路径；
+  - `.venv/.venv-gsv + runtime` 预装；GPL 合规目录在 `licenses/piper/`；
+  - 无 `config.toml`，`config.example.toml` 凭据为空。
+- 云端：`...\voice-cloud-offline-v1.0.0-win-x64.zip`（249M）；`speaker` 已清空，需填自己的火山音色 ID。
+- SHA256 在 `...\release\SHA256SUMS.txt`。
+- **这两个包是候选包**：许可（piper GPL / huayan / 微调年龄权重）仍按用户“先不管”处理；
+  包内 `THIRD_PARTY_LICENSES`/`README-OFFLINE` 已标记待确认。
+
+### 已验证
+
+- `node scripts/test-voice-pack-import.mjs` → 9/9；
+- `npm run test:audit` → **81/81**（注意：`test-voice-cloud-credentials` 曾因 Windows 临时目录抖动偶发失败，单跑通过）；
+- `npm run test:regressions` → 全过；`plugins/surfcore npm test` → 全绿；
+- 本地包微调权重已实测能被 GPT-SoVITS 加载并生成 WAV；云端包已实测能启动、piper 兜底能出声。
+- **真实 7.9G 导入**：用 `createVoicePacks` 把 `D:/surfcore-poc/stage/voice-local` 导入到
+  `D:/surfcore-poc/import-real-packs/voice-local`，目标 7.6G，源目录保留；
+  pyvenv 已指向目标 `runtime`，`.venv`/`.venv-gsv` import 通过；rename 锁用 120×500ms 重试解决。
+
+### 没验证 / 交接
+
+- **没有在真实设置页点过导入**；UI 的确认框/错误弹窗/删除源/删除备份需要手测。
+- 没有在 DSH 重启后验证桥接新路由（需要重启桥接）。
+- 没有做“运行自检”；成功文案只表示文件导入，不表示语音服务可用。
+- 导入的失败/取消分支有单测；真实 7.9G 复制已跑通，但取消清理失败、旧包备份恢复的 Windows 现场未手测。
+- 发布前仍要决定：piper GPL 合规/替换、huayan 与微调权重许可、是否公开候选包。
+- 建议版本：patch 0.6.23（与今天前两批同版）；未改 version。
+
+---
+
+## 快照：2026-10-29 13:45–14:30（提问回答身份来源 + 主人特权审计 + 权限清单）
+
+### 用户要求
+
+> 「普通用户可讨论偏好，但其发言不能自动变成正式配置；涉及身份/权限/安全/配置/特权操作时，
+> 程序必须基于真实发送者校验；`[仅主人]` 只能收窄、不能授予；主人特权操作要可审计。」
+
+### 核实到的硬约束
+
+- DSH 的 **单选题答案不允许 `selected + custom` 并存**（`dsh-host-apiproxy/lib/index.js:1316-1318`、
+  README.zh.md:25）；多选才允许。→ 用户拍板方案 A：单选 `custom` 放「选项文字 + 来源」、`selected` 留空。
+- 现有 question 分支**不读 isOwner、不记录回答者**；审批本来就 owner-only；AI 写不了配置/人格卡。
+- 现有审计（插件 `audit.jsonl`）2MB 原地裁到 2000 行，会丢历史，不适合做特权审计。
+
+### 改了什么
+
+| 改动 | 落点 |
+| --- | --- |
+| 回答编码 + `[仅主人]` 判定 + 消费条件 | 新增 `src/question-answers.js`；`src/bridge.js` 消费点/`handlePendingAnswer` |
+| 主人特权审计（7 类事件、1MB×5、90 天清理、失败可见） | 新增 `src/owner-audit.js`；`src/bridge.js` 各授权点 + `GET /api/owner-audit` |
+| 设置页「管理操作记录」弹窗 + 打开文件夹 | `plugins/surfcore/lib/client.js`、`lib/index.js` |
+| preset 提问分类规则（第 17 条） | `dsh/agent-presets/qq-chat-v2/agent.cordis.yml` + 重建 patch |
+| 权限清单文档（7 项 + 判定/审计/测试状态） | 新增 `docs/guides/PERMISSIONS.md` |
+| 回归 | `scripts/test-question-answers.mjs`、`scripts/test-owner-audit.mjs`（已进 test:audit） |
+
+### 已验证
+
+- `node scripts/test-question-answers.mjs` → 通过（单选/多选编码、owner-only、来源）；
+- `node scripts/test-owner-audit.mjs` → 通过（轮转/跨文件读尾/写失败/90 天清理）；
+- `npm run test:audit` → **80/80**；`npm run test:regressions` → 全过；`cd plugins/surfcore && npm test` → 全绿；
+- preset patch 重建后 `test-agent-preset-patches` 通过。
+
+### 没验证 / 交接
+
+- **真实 DSH 问答往返**：单选题 `custom-only` 的模型可见文本、设置页弹窗手点、preset 安装 + 重启 DSH 后的实际生效提示词；
+- `PERMISSIONS.md` 里 7 项权限有 5 项还是「待补程序断言」；
+- 旧会话里的“管理员”历史不回溯；
+- 建议 patch（0.6.23，与前面两条同版）；未改 version。
+
+---
+
+## 快照：2026-10-29 12:20–12:50（SnowLuma 检测：自定义目录 + 概览「浏览…」）
+
+### 用户原话
+
+> 「装好 snowluma2 后，点击检测已安装 snowluma 按钮，检测不到……能否在这个按钮右边添加一个浏览按钮
+> 让用户自己在电脑上选择安装的 snowluma 的路径作为保底？至于选择的是文件还是 launcher.bat，你认为哪个合理」
+
+### 核实（先分析再动手）
+
+- 按钮**触发链路正常**：概览 `client.js` → `POST /dsh-surfcore/api/bridge {action:"detect-snowluma"}`
+  → 插件 `handleBridge` → `findSnowLumaInstall()`；本机 `D:\deepseekwork\SnowLuma2`（标准 `app\launcher.bat`）实测能命中。
+- 真正问题：候选是**封闭集合**（配置 + 2 个环境变量 + 7 个写死目录），装在 `D:\软件\SnowLuma2` 这类
+  自定义目录就永远失败；而手动填路径的入口在 QQ 页高级设置，概览卡片没有。
+- 结论：**目录浏览比选 launcher.bat 合理**（`launcherPath` 本来存根目录；选文件要反推两层，容易选错 exe/zip）。
+  归一函数同时兼容 `app` 目录 / `app\launcher.bat` / `SnowLuma.exe`。
+
+### 改了什么
+
+| 改动 | 落点 |
+| --- | --- |
+| 安装位置识别抽成模块（归一 / 候选 / tried） | 新增 `plugins/surfcore/lib/snowluma-install.js` |
+| 检测保留手选优先；显式路径只验证它、不回退猜测 | `plugins/surfcore/lib/index.js` · `detect-snowluma` |
+| 失败给**结构化报告**（`code/title/error/hint/tried`） | `plugins/surfcore/lib/snowluma-install.js` · `snowLumaMissingReport()` |
+| 失败**弹窗**（含「浏览…选择目录」「打开官方下载页」，可展开试过的路径） | `plugins/surfcore/lib/client.js` · `ErrorModal` + 概览接线 |
+| 概览 SnowLuma 卡加「浏览…」+ 文案改成指浏览 | `plugins/surfcore/lib/client.js` |
+| 回归（30 项，含真目录夹具 + 失败报告断言） | `plugins/surfcore/scripts/test-snowluma-install.mjs`（已进 `npm test`） |
+| 规则入库（刚性） | `AGENTS.md` 1.7、`docs/guides/ERROR-REPORTING.md`、`docs/RELEASE.md` 交接格式、`docs/cases/_TEMPLATE.md` |
+| 文档 | `docs/PITFALLS.md` #80/#81、`docs/cases/2026-10-29-snowluma-detect-manual-path.md`、`docs/guides/SNOWLUMA_TROUBLESHOOT.md` |
+
+### 已验证
+
+- `cd plugins/surfcore && node scripts/test-snowluma-install.mjs` → **30 项**通过（22 项路径识别 + 8 项失败报告）；
+- `node scripts/test-voice-cloud-credentials.mjs` → 通过；临时目录读取加了 EBUSY/ENOENT 重试
+  （Windows Defender/索引器会短暂占住刚写的 `config.toml`，之前偶发 1/78 假红）；
+- `cd plugins/surfcore && npm test` → 全绿；`npm run test:audit` → **78/78**；
+- 本机配置 `launcherPath=D:\deepseekwork\SnowLuma2`，检测命中。
+
+### 没验证 / 交接
+
+- **没在真机点「浏览…」/看失败弹窗**（原生 PowerShell 选择框需要桌面会话，自动化点不了）——请用户手点一次确认；
+- 层级：**实现层为主**（检测归一/候选重构）+ **一处向后兼容的接口扩展**（`detect-snowluma` 新增可选 `path`、失败响应多 `code/title/hint/tried`）+ 表现层（浏览按钮 / 错误弹窗）；
+- 建议 patch（0.6.23，与上一条凭据修复同一版）；未改 `version`。
+
+---
+
+## 快照：2026-10-29 11:55–12:15（云端语音包凭据边界：安装不再携带预置密钥）
+
+### 用户原话
+
+> 「voice-cloud 的 config.toml 里硬编码了火山 app_id / access_key。公开发布会让别人用我们的额度计费 →
+> 改成让用户自己填 + 安装引导 + 文档说明。」
+
+### 核实（先查再动手；结论和直觉不同）
+
+- 真实 AccessKey **没有**进过任何 git 历史 / 公开镜像 / Release 资产（dev + 三个公开仓库都 `-S` 搜过）；
+- 但公开的 `surfvoicecloud/config.example.toml:23`、`surfvoicelocal/config.example.toml:27` 里有**真实 AppID**
+  （单独不能计费，但安装时会被复制成用户的 `config.toml`）；
+- 带 key 的 `config.toml` 只在本机 `voice/packages/{voice-cloud,voice-local}`（无 git），
+  而 `src/voice-packs.js` 的 `devPackUrl()` 默认安装源正指向那里 → **一打成 zip 就会带上**；
+- 结论：不是"已经泄露"，是"已经埋好引信"；按"防泄漏"修。
+
+### 改了什么
+
+| 改动 | 落点 |
+| --- | --- |
+| 新装清空 `cloud_app_id` / `cloud_access_key`（保留 `cloud_resource`），重装保留用户填的 | `src/voice-packs.js` · `stripCloudCredentials()` / `ensurePackConfig()`，install() 调用 |
+| 云端包未配置 → 拒绝启动并告诉用户填哪三项 | `src/voice-packs.js` · `start()` |
+| `list()` 暴露 `needsCloudConfig`，设置页显示"待填云端密钥" | `src/voice-packs.js` · `list()`；`plugins/surfcore/lib/client.js` |
+| 装完自动滚到密钥表单 + 卡片提示 + 通用 AppID placeholder | `plugins/surfcore/lib/client.js`、`public/console.html` |
+| 回归 | `scripts/test-voice-cloud-credentials.mjs`（已进 `test:audit`） |
+| 文档 | `docs/PITFALLS.md` #79、`docs/VOICE-PACKS.md`、`docs/cases/2026-10-29-voice-cloud-credentials.md` |
+
+### 已验证
+
+- `npm run test:audit` → **78/78**（新增 1 条脚本）；
+- `node scripts/test-voice-cloud-credentials.mjs` 连跑 3 次通过（含真调用 install() 的夹具安装 + force 重装）；
+- `plugins/surfcore npm test` → 结果见本次提交说明（client contract / voice health / flatten 等全跑）。
+
+### 没验证 / 交接
+
+- **公开镜像没动**（编辑器不碰公开仓库）：两个 `config.example.toml` 的真实 AppID 要换成占位符；
+- 未在真机从 GitHub 公开包全新安装一遍（会真下依赖/模型）；
+- 本机 `voice/packages/*/config.toml` 仍是真实 key（开发自用）——**以后打 zip 前必须清或走安装入口**；
+- 建议 patch（0.6.23）：行为有变但不新增功能面。
+
+---
+
 ## 快照：2026-10-26 09:05–09:40（设置页「检查更新」：本体 + 语音包 + 桌宠 + 未来扩展）
 
 ### 用户原话

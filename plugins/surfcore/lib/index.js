@@ -29,6 +29,7 @@ import {
 } from './paths.js';
 import { resolvePersonaFile } from './persona.js';
 import { discoverSnowLumaConnection } from '../../../src/snowluma-conn.js';
+import { findSnowLumaInstall as findSnowLumaInstallIn, normalizeSnowLumaInstall, snowLumaMissingReport } from './snowluma-install.js';
 import { buildInstallChecks, installOk, planDoctorFix } from './doctor.js';
 import { VOICE_PORTS, readPackCharacters, validateCharacter } from './voice-health.js';
 import {
@@ -678,7 +679,7 @@ export function apply(ctx) {
         launcherPath: String(snow.launcherPath ?? ''),
         allowLaunch: snow.allowLaunch === true,
         downloadUrl: String(snow.downloadUrl ?? 'https://github.com/SnowLuma/SnowLuma/releases/latest'),
-        detected: findSnowLumaInstall() !== null,
+        detected: findSnowLumaInstall().ok,
         diagnosis: snowDiag,
       },
       mode: {
@@ -1576,40 +1577,11 @@ export function apply(ctx) {
     return candidates.find((file) => { try { return fs.existsSync(file); } catch { return false; } }) ?? '';
   }
 
-  function findSnowLumaInstall() {
-    const cfg = readQqConfig().config?.snowluma ?? {};
-    const candidates = [];
-    const add = (value) => { const text = String(value ?? '').trim(); if (text) candidates.push(text); };
-    add(cfg.launcherPath);
-    add(process.env.SNOWLUMA_HOME);
-    add(process.env.SNOWLUMA_DIR);
-    for (const base of [
-      path.join(os.homedir(), 'SnowLuma2'),
-      path.join(os.homedir(), 'SnowLuma'),
-      path.join(os.homedir(), 'Desktop', 'SnowLuma2'),
-      path.join(os.homedir(), 'Downloads', 'SnowLuma2'),
-      path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'SnowLuma2'),
-      path.join(path.dirname(QQBOT_ROOT), 'SnowLuma2'),
-      path.join(process.env.ProgramFiles || 'C:/Program Files', 'SnowLuma2'),
-    ]) add(base);
-    for (const raw of candidates) {
-      const resolved = path.resolve(raw);
-      try {
-        if (fs.statSync(resolved).isFile()) {
-          if (/launcher\.bat$|SnowLuma\.exe$/i.test(resolved)) {
-            const dir = path.dirname(resolved);
-            const root = path.basename(dir).toLowerCase() === 'app' ? path.dirname(dir) : dir;
-            return { root, launcher: resolved };
-          }
-          continue;
-        }
-      } catch {}
-      for (const relative of ['app/launcher.bat', 'launcher.bat', 'SnowLuma.exe']) {
-        const launcher = path.join(resolved, relative);
-        try { if (fs.existsSync(launcher)) return { root: resolved, launcher }; } catch {}
-      }
-    }
-    return null;
+  // SnowLuma 安装位置识别：规则在 snowluma-install.js（「检测」与「浏览…」共用同一套，
+  // 避免两边各猜各的）。这里只负责把当前 QQ 配置喂进去。
+  function findSnowLumaInstall(extraPaths = []) {
+    const snow = readQqConfig().config?.snowluma ?? {};
+    return findSnowLumaInstallIn({ snowluma: snow, extraPaths });
   }
 
   // SnowLuma 没有原生窗口，它的界面是 WebUI（默认 http://127.0.0.1:5100）。
@@ -1847,10 +1819,42 @@ export function apply(ctx) {
   // 插件自己不做业务，只负责带控制台令牌转发，桥接那边怎么改这里都不用动。
   async function handleVoice(req, res, url) {
     const suffix = url.pathname.slice(`${API_PREFIX}/voice`.length) || '';
+    const method = String(req.method || 'GET').toUpperCase();
+    // 参考音频“下载”在 Electron/新窗口里会没反应（target=_blank 被宿主拦截），
+    // 改为打开包内 voicepack 目录并选中文件；插件侧直接做，不走桥接代理。
+    if (url.pathname === `${API_PREFIX}/voice/packs/sample-open`) {
+      if (method !== 'POST') { json(res, 405, { ok: false, code: 'METHOD_NOT_ALLOWED', error: '只支持 POST' }); return; }
+      try {
+        const body = await readBody(req);
+        const id = String(body.id || 'voice-cloud');
+        const listed = await callBridge('/api/voice/packs', { timeoutMs: 8000 });
+        const pack = (listed.data?.packs || []).find((p) => p.id === id);
+        if (!pack?.dir) {
+          json(res, 404, { ok: false, code: 'SAMPLE_PACK_NOT_FOUND', error: '语音包还没安装，找不到参考音频', hint: '先安装/导入云端语音包，再点「打开所在目录」。' });
+          return;
+        }
+        const dir = path.join(pack.dir, 'voicepack');
+        const files = await fs.promises.readdir(dir).catch(() => []);
+        const name = files.find((f) => /\.(wav|mp3|m4a)$/i.test(f));
+        if (!name) {
+          json(res, 404, { ok: false, code: 'SAMPLE_FILE_NOT_FOUND', error: '包内没有参考音频文件', hint: `检查目录：${dir}` });
+          return;
+        }
+        const file = path.join(dir, name);
+        if (process.platform !== 'win32') {
+          json(res, 200, { ok: false, code: 'OPEN_FOLDER_UNSUPPORTED', error: '当前系统不支持自动打开目录', hint: `手动打开：${dir}` });
+          return;
+        }
+        execFile('explorer.exe', ['/select,', file], { windowsHide: true }, () => {});
+        json(res, 200, { ok: true, path: file, dir });
+      } catch (e) {
+        json(res, 502, { ok: false, code: 'OPEN_FOLDER_FAILED', error: `打开参考音频目录失败：${e?.message || e}`, hint: '桥接/文件管理器是否可用；也可以手动打开语音包目录下的 voicepack。' });
+      }
+      return;
+    }
     const target = `${consoleBase()}/api/voice${suffix}${url.search || ''}`;
     const headers = { 'x-console-token': consoleToken() };
     const init = { method: req.method };
-    const method = String(req.method || 'GET').toUpperCase();
     if (method !== 'GET' && method !== 'HEAD') {
       init.body = await readBody(req);
       headers['content-type'] = 'application/json';
@@ -2195,9 +2199,17 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output 
       return;
     }
     if (action === 'detect-snowluma') {
-      const found = findSnowLumaInstall();
-      if (!found) {
-        json(res, 200, { ok: false, error: '没找到 SnowLuma：请先下载并解压 SnowLuma2，然后在 QQ → SnowLuma 里填安装目录' });
+      // 可选 path：用户点「浏览…」选了解压目录/app 目录/launcher.bat 时，**只验证这个路径**——
+      // 用户明确选了一个，就不能悄悄回退去猜别的目录（否则会"检测成功"但保存的是另一份安装）。
+      const picked = String(body.path ?? '').trim();
+      const direct = picked ? normalizeSnowLumaInstall(picked) : null;
+      const found = picked
+        ? (direct ? { ok: true, ...direct, tried: [{ path: picked, ok: true }] } : { ok: false, tried: [{ path: picked, ok: false }] })
+        : findSnowLumaInstall();
+      if (!found.ok) {
+        // 失败必须有结构化报告：code + 人读的 error + 下一步 hint + 试过的路径（AGENTS 1.7）。
+        const report = snowLumaMissingReport({ picked, tried: found.tried.map((x) => x.path).slice(0, 12) });
+        json(res, 200, { ok: false, code: report.code, title: report.title, error: report.error, hint: report.hint, tried: report.tried });
         return;
       }
       saveQqConfig({ snowluma: { launcherPath: found.root, allowLaunch: true } });
@@ -2579,6 +2591,32 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output 
     json(res, 200, { ok: true, plugin, bridge, paths: { pluginLog: PLUGIN_LOG, bridgeLog: path.join(QQ_STATE_DIR(), 'bridge.log') } });
   }
 
+  // 主人特权操作审计：只读桥接写好的 state/owner-audit.jsonl；agent 永远拿不到。
+  async function handleOwnerAudit(req, res, url) {
+    if (req.method === 'GET') {
+      const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit')) || 50));
+      const result = await callBridge(`/api/owner-audit?limit=${limit}`, { timeoutMs: 8000 });
+      json(res, result.status || 200, result.data ?? { ok: false, error: result.error || '桥接不可用' });
+      return;
+    }
+    if (req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse((await readBody(req)) || '{}'); } catch { json(res, 400, { ok: false, error: '请求体不是合法 JSON' }); return; }
+      // 只支持「打开所在文件夹」；路径固定，不接受任何用户输入。
+      if (body.action !== 'open') { json(res, 400, { ok: false, error: '未知 action' }); return; }
+      if (process.platform !== 'win32') { json(res, 200, { ok: false, error: '只有 Windows 支持打开文件夹' }); return; }
+      const dir = path.join(QQBOT_ROOT, 'state');
+      try {
+        spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore', windowsHide: false }).unref();
+        json(res, 200, { ok: true, path: dir });
+      } catch (error) {
+        json(res, 500, { ok: false, error: String(error?.message ?? error) });
+      }
+      return;
+    }
+    json(res, 405, { ok: false, error: 'method not allowed' });
+  }
+
   // ── 平台 ────────────────────────────────────────────────────────────────
   async function handlePlatforms(req, res) {
     json(res, 200, { ok: true, platforms: await platforms.statusAll(), capabilities: ['identity', 'memory.read', 'memory.write', 'prompt.block', 'actions'] });
@@ -2668,6 +2706,7 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output 
     if (pathname === `${API_PREFIX}/updates`) { await handleUpdates(req, res); return; }
     if (pathname.startsWith(`${API_PREFIX}/bili/`)) { await handleBili(req, res, url); return; }
     if (pathname === `${API_PREFIX}/logs`) { handleLogs(res, url); return; }
+    if (pathname === `${API_PREFIX}/owner-audit`) { await handleOwnerAudit(req, res, url); return; }
     if (pathname === `${API_PREFIX}/browse`) { await handleBrowse(req, res, url); return; }
     if (pathname === `${API_PREFIX}/privacy/explain`) {
       const body = req.method === 'POST' ? JSON.parse(await readBody(req) || '{}') : { text: url.searchParams.get('text') ?? '' };

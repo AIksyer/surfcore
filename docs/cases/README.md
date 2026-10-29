@@ -6,6 +6,11 @@
 
 | 日期 | 案例 | 一句话 | 版本 |
 | --- | --- | --- | --- |
+| 2026-10-29 | [云端参考音频“下载”没反应](2026-10-29-cloud-sample-download.md) | 接口 200 但 `<a target=_blank>` 被宿主拦 → fetch+Blob，加「打开所在目录」 | 待发布 |
+| 2026-10-29 | [语音包离线导入](2026-10-29-voice-pack-offline-import.md) | 只有“改安装目录”且静默失败 → 校验/复制/备份/回滚/结构化错误，本地+云端 | 待发布 |
+| 2026-10-29 | [提问回答无身份来源 + 特权操作无审计](2026-10-29-owner-question-audit.md) | question 不读 isOwner、DSH 单选不许 selected+custom → custom-only；7 类主人审计 | 待发布 |
+| 2026-10-29 | [SnowLuma 装在自定义目录检测不到](2026-10-29-snowluma-detect-manual-path.md) | 检测只猜固定目录 + 手动入口藏在 QQ 页 → 概览加「浏览…」，路径归一 | 待发布 |
+| 2026-10-29 | [云端语音包凭据不能随包分发](2026-10-29-voice-cloud-credentials.md) | 安装包复制 example 时会带上开发者的火山 AppID/AccessKey → 新装一律清空、强制自填 | 待发布 |
 | 2026-10-28 | [更新导致 DSH 硬崩](2026-10-28-update-crash.md) | 进程内覆盖自己的安装目录 → 宿主被终止（0xFFFF7003） | v0.6.12 |
 | 2026-10-28 | [本地语音装完不可用（位置/import/工具）](2026-10-28-voice-pack-layout-and-imports.md) | 归档解压落点、jieba_fast、MCP 工具快照 | v0.6.22 |
 | 2026-10-28 | [语音包卡在依赖安装 50 分钟](2026-10-28-voice-install-stuck-deps.md) | 依赖阶段无百分比、无耗时、无取消、pip 走官方源 | v0.6.21 |

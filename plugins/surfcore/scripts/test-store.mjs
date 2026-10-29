@@ -26,7 +26,7 @@ assert.equal(restored.consoleToken, 'console-secret');
 const normalized = normalizeQqConfig({
   ...sample,
   consolePort: 999999,
-  allow: { private: ['12345678', 'abc'], groups: ['100000004'] },
+  allow: { private: ['12345678', 'abc'], groups: ['767098733'] },
   biliBridge: { memory: { enabled: false, refreshIntervalMs: 1 }, share: { times: ['7:00', '99:99'] } },
 });
 assert.equal(normalized.consolePort, 65535);

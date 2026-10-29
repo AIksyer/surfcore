@@ -80,8 +80,8 @@ export async function createForward(origId, text) {
 export async function verifyForward(id, bvid) {
   try {
     const c = cred()
-    const j = await (await fetch(`https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid=1000000003`, {
-      headers: { 'user-agent': UA, referer: 'https://space.bilibili.com/1000000003/dynamic', cookie: cookieOf(c) },
+    const j = await (await fetch(`https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space?host_mid=1483638708`, {
+      headers: { 'user-agent': UA, referer: 'https://space.bilibili.com/1483638708/dynamic', cookie: cookieOf(c) },
     })).json()
     const it = (j.data?.items ?? []).find((x) => String(x.id_str) === String(id))
     if (!it) return { ok: false, why: '没读到' }

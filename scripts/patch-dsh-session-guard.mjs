@@ -17,7 +17,7 @@
 // 用法：
 //   node scripts/patch-dsh-session-guard.mjs --check          # 看本机是否已打补丁（默认 asar 路径）
 //   node scripts/patch-dsh-session-guard.mjs --apply          # 打补丁（自动备份 app.asar）
-//   node scripts/patch-dsh-session-guard.mjs --apply --asar "<DSH 安装目录>\resources\app.asar"
+//   node scripts/patch-dsh-session-guard.mjs --apply --asar "D:\deepseek\resources\app.asar"
 //   DSH 更新后补丁会消失，重跑 --check / --apply 即可（幂等）。
 import fs from 'node:fs';
 import path from 'node:path';

@@ -102,7 +102,7 @@ const history = {
     fixture(9000, now - 2 * 3600_000, '2001', '很久以前'),
     // 真正错过的两条群友消息 + 一条自己以前发的消息。
     fixture(9001, now - 40 * 60_000, '2001', '你们刚才说的那个我错过了'),
-    fixture(9002, now - 20 * 60_000, SELF_ID, '我上次说了一半就掉线了', '示例小肥鱼'),
+    fixture(9002, now - 20 * 60_000, SELF_ID, '我上次说了一半就掉线了', '卡哇伊的小肥鱼'),
     fixture(9003, now - 5 * 60_000, '2002', '回来没'),
     // 重复 id 必须只入一次。
     fixture(9003, now - 5 * 60_000, '2002', '回来没'),
@@ -141,7 +141,7 @@ const h = await bridgeHarness({
 });
 try {
   h.setMode('reserved2');
-  h.setSelfIdentity('示例小肥鱼', SELF_ID);
+  h.setSelfIdentity('卡哇伊的小肥鱼', SELF_ID);
 
   // 关闭时不得请求历史接口。
   const conf = h.historyCatchUpConfig();
@@ -215,7 +215,7 @@ const h2 = await bridgeHarness({
 });
 try {
   h2.setMode('reserved2');
-  h2.setSelfIdentity('示例小肥鱼', SELF_ID);
+  h2.setSelfIdentity('卡哇伊的小肥鱼', SELF_ID);
   const result = await h2.runHistoryCatchUp('test', { force: true });
   assert.equal(result.incoming, 2);
   assert.equal(result.results.find((item) => item.key === GROUP)?.wakeScheduled, false, '关掉 wake 后不得主动醒');

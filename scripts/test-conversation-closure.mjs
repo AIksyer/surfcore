@@ -71,7 +71,7 @@ test('用户原场景：对方收束 + 我回「嗯嗯」→ 可以收尾', () =
   const a = assessConversationClosure({
     kind: 'private',
     messages: [
-      msg('诶～原来主人也会脸红的呀', { minutesAgo: 3 }),
+      msg('诶～原来弥叭也会脸红的呀', { minutesAgo: 3 }),
       msg('那咱们扯平啦，谁都不许先低头', { minutesAgo: 2 }),
       msg('嗯嗯', { self: true, minutesAgo: 1 }),
     ],

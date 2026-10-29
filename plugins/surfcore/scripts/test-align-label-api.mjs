@@ -26,7 +26,7 @@ fs.writeFileSync(path.join(tempRoot, 'src', 'bridge.js'), '// fixture bridge pla
 fs.writeFileSync(path.join(tempRoot, 'roles', '角色.md'), '# 角色卡\n\n测试用。\n');
 fs.writeFileSync(path.join(tempRoot, 'config.json'), JSON.stringify({
   ownerQQ: '10001',
-  allow: { private: ['10001'], groups: ['100000004'] },
+  allow: { private: ['10001'], groups: ['767098733'] },
   consoleToken: 'fixture-console-token',
 }, null, 2));
 fs.writeFileSync(path.join(tempState, 'bili.config.json'), JSON.stringify({
@@ -95,7 +95,7 @@ try {
     action: 'add',
     link: {
       identities: {
-        qq: { id: '10001', name: '阿零', groups: ['100000004'] },
+        qq: { id: '10001', name: '阿零', groups: ['767098733'] },
         bili: { id: '87654321', name: '零酱' },
       },
       label: '小零',

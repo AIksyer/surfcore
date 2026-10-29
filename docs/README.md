@@ -16,6 +16,7 @@
 | [PITFALLS.md](PITFALLS.md) | 踩坑档案：现象 / 根因 / 处置 / 怎么验证 / 残余风险（含 2026-10-22 会话日志事故全流程） | ✅ 新坑先记这里 |
 | [HANDOFF.md](HANDOFF.md) | 交接快照：现在做到哪、什么没验证、下一步顺序、环境指纹、收工检查单 | ✅ 每次收工更新 |
 | [RISK_REGISTER.md](RISK_REGISTER.md) | 风险台账：风险 / 影响 / 现有缓解 / 状态 / 残余风险，按严重度排序 | ✅ 发现新风险就加一行 |
+| [RELEASE-QUEUE.md](RELEASE-QUEUE.md) | **发布待办队列**：编辑会话每次「总结这次的改动」追加带时间戳/覆盖提交的批次 + 可直接复制的交接块；发布会话从这里取 | ✅ 2026-10-29 新增 |
 
 ---
 
@@ -60,6 +61,9 @@
 | [guides/AGENT-TOOLS-AND-PRESETS.md](guides/AGENT-TOOLS-AND-PRESETS.md) | **工具面与 preset**：三个 MCP server、39 个 `qq_*` 工具全表与开关、权限与会话绑定、fail-closed 工具守卫、两代 preset、装配流程 | ✅ 2026-10-26 新增 |
 | [guides/DATA-AND-CONFIG.md](guides/DATA-AND-CONFIG.md) | **配置与数据**：三份配置逐段全解（含默认值/生效时机）、约 95 个状态文件全表（谁写谁读/能不能删）、角色包结构、备份与迁移 | ✅ 2026-10-26 新增 |
 | [guides/BOUNDARIES.md](guides/BOUNDARIES.md) | **能力边界**：环境边界、能力矩阵（能做/有条件/不做）、失败模式 → 恢复动作表、安全承诺与不承诺、资源与数据出机边界 | ✅ 2026-10-26 新增 |
+| [guides/12-LESSONS-ARCHITECTURE.md](guides/12-LESSONS-ARCHITECTURE.md) | **12 课总结 + 修 bug 手册**：可直接粘贴的提示词模板、底层机制（进程/连接/文件/时间/身份/状态/契约/配置/消息/AI）、SurfCore 链路与状态所有权表、已知 bug 候选、十问清单与爆炸半径 | ✅ 2026-10-29 新增（当提示词用） |
+| [guides/ERROR-REPORTING.md](guides/ERROR-REPORTING.md) | **报错与建议规范（刚性）**：`ok/code/error/hint/tried` 结构、弹窗 vs toast 判据、禁止清单、交付自检；对应 AGENTS 1.7 | ✅ 2026-10-29 新增 |
+| [guides/PERMISSIONS.md](guides/PERMISSIONS.md) | **权限清单**：身份判定唯一来源、7 项主人特权（判定/代码/审计/测试状态）、关系与称呼不参与授权、变更检查单 | ✅ 2026-10-29 新增 |
 
 ## design/ —— 设计与规划（读设计意图用）
 

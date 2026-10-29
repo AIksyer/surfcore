@@ -186,7 +186,7 @@ const { addLink, removeLink } = await import('../lib/align.js');
 try {
   const link = addLink({
     identities: {
-      qq: { id: '10001', name: '测试群友', groups: ['100000004'] },
+      qq: { id: '10001', name: '测试群友', groups: ['767098733'] },
       bili: { id: '20002', name: '测试鱼' },
     },
     source: 'smoke-test',

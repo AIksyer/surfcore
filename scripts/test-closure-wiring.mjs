@@ -19,7 +19,7 @@ async function test(name, run, options) {
 
 const now = Date.now();
 function seedChat(h, key = 'private:123') {
-  h.appendSocialV2Message(key, '主人', '诶～原来主人也会脸红的呀', '诶～原来主人也会脸红的呀', false, true, 'm1');
+  h.appendSocialV2Message(key, '主人', '诶～原来弥叭也会脸红的呀', '诶～原来弥叭也会脸红的呀', false, true, 'm1');
   h.appendSocialV2Message(key, '主人', '那咱们扯平啦，谁都不许先低头', '那咱们扯平啦，谁都不许先低头', false, true, 'm2');
   const st = h.getSocialV2State(key);
   // 模拟她刚发完「嗯嗯」：reserved2 的工具发送会记进 sentTexts / recentMessages，

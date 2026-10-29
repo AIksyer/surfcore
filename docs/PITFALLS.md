@@ -2619,3 +2619,194 @@ return list[0] ?? pool[0];
   bootstrap 造 `jieba_fast` 替身（转发 jieba）；装 imageio-ffmpeg 并写 `config.toml [ffmpeg] path`；
   requirements 补 torchmetrics/imageio-ffmpeg；pip 加包内缓存；UI 提示"改开关要重启 DSH"。
 - **验证**：布局用 file:// 归档实测通过；真机 import/ffmpeg 未验证。
+
+## #79（2026-10-29）「装个语音包，用上别人的火山额度」—— 凭据被当成了包的一部分
+
+**现象**
+- 用户提出：cloud 包的 `config.toml` 里硬编码了火山 AppID / AccessKey，公开发布会让别人用我们的额度。
+- 核实结果（先查再动手）：AccessKey **没有**进过任何 git 历史 / 公开镜像 / Release 资产；
+  但公开 `config.example.toml` 里有真实 AppID，且安装时会把它复制成用户的 `config.toml`。
+  真正带 key 的文件只在本地 `voice/packages/*/config.toml`，而默认安装源正指向那里。
+
+**根因**
+- 安装流程 `copyFile(config.example.toml → config.toml)` 逐字复制，不区分里面有没有凭据；
+- `devPackUrl()` 把「开发机源目录」当默认安装源 —— 它和「可分发内容」是同一个目录；
+- 没有任何测试/闸门检查「装完的包里是否带凭据」，只有人肉发现。
+
+**处置（v0.6.23 候选，2026-10-29）**
+- `src/voice-packs.js`：`stripCloudCredentials()` + `ensurePackConfig()`，**新装**清空
+  `cloud_app_id` / `cloud_access_key`（保留 `cloud_resource`），重装保留用户自己填的；
+- `list()` 暴露 `needsCloudConfig`；`start()` 拒绝未配置的云端包并指路；
+- 设置页装完自动滚到密钥表单、卡片提示「待填云端密钥」、AppID placeholder 不再用真实账号；
+- 回归：`scripts/test-voice-cloud-credentials.mjs`（26 断言 + 4 个 `assert.rejects`，含真调用 `install()`）。
+
+**怎么验证**
+```bash
+npm run test:audit   # 78/78
+node scripts/test-voice-cloud-credentials.mjs
+```
+真机看：全新装 cloud 包 → `state/voice-packs/voice-cloud/config.toml` 两个键为空 →
+设置页显示「待填云端密钥」→ 不填直接点启动会被拒绝。
+
+**预防 / 下次注意**
+- **凡「开发目录 = 分发源」的包，默认就当成会泄漏**：本地自用的密钥文件不要放在可打包目录里，
+  或至少在安装入口做一次清洗。
+- 公开镜像的 `config.example.toml` 里的真实 AppID 需要发布会话改掉（编辑器不碰公开仓库）。
+- 若曾把 `voice/packages` 打包发人，必须轮换 AccessKey；只清 example 不够。
+
+
+## #80（2026-10-29）「装好了却检测不到 SnowLuma」—— 检测候选是封闭集合，手动入口藏在别的页
+
+**现象**
+- 用户把 SnowLuma2 解压到自定义目录（如 `D:\软件\SnowLuma2`），概览点「检测已安装的 SnowLuma」→ 一直「没找到」。
+- 错误文案还让用户「在 QQ → SnowLuma 里填安装目录」，但用户正在看的概览卡片上并没有这个入口。
+
+**根因**
+- `findSnowLumaInstall()`（插件 `lib/index.js`）只在一组**写死的**目录里猜：
+  配置路径 + 2 个环境变量 + 7 个常见位置；不在列表里就永远返回 null。
+- 「猜」只是省一步的便利，却成了唯一途径：概览没有手动选择，手填入口埋在 QQ 页高级设置。
+- 0.6.11 只修了「填对路径却认错」，没测「路径没填/在别处时怎么办」。
+
+**处置（2026-10-29）**
+- 新增 `plugins/surfcore/lib/snowluma-install.js`：
+  `normalizeSnowLumaInstall()`（根目录 / app 目录 / `app\launcher.bat` / `SnowLuma.exe` / 多套一层 → 统一成 `{root, launcher}`）、
+  `snowLumaCandidates()`（手选 > 配置 > 环境变量 > 常见位置）、`findSnowLumaInstall()`（失败也返回 `tried`）。
+- 概览 SnowLuma 卡加「浏览…」（原生目录选择，复用 `/browse`）；选中后**只验证这个路径**并保存，
+  不会"检测成功"却保存了另一份安装。
+- `detect-snowluma` 新增**可选** `path` 参数（向后兼容：旧调用不传照常工作）。
+
+**怎么验证**
+```bash
+cd plugins/surfcore && node scripts/test-snowluma-install.mjs   # 22 项
+cd plugins/surfcore && npm test                                  # 全绿
+npm run test:audit                                               # 78/78
+```
+真机：装在 `D:\软件\SnowLuma2` → 点「浏览…」选这个目录（里面有 `app`）→ 提示已找到并保存。
+
+**预防 / 下次注意**
+- 凡是「自动探测」，都要回答：**探测失败时用户的下一步是什么？** 如果答案是「去另一个页面手填」，
+  就等于没做兜底——兜底必须出现在失败提示的同一个界面里。
+- 路径类输入先做**归一**（根/子目录/启动文件），再判断；不要假设用户会按文档的层级选。
+
+## #81（2026-10-29）失败只闪一条 toast、还让用户去别的页面找入口 —— 「报错」不等于「可行动」
+
+**现象**
+- SnowLuma 检测失败时，用户只看到一条会消失的 toast；错误文案让他「在 QQ → SnowLuma 里填安装目录」，
+  而他正看着的概览卡片上根本没有这个入口。用户不知道下一步该点哪。
+- 同类形态：`catch {}` 后继续、只 `console.log`、接口回 `{ok:false}` 前端当没看见。
+
+**根因**
+- 只做了「报错」，没做「可行动」：错误文本没有下一步，兜底入口不在失败发生的同一个界面里；
+- 接口失败只回一句 `error`，没有 `code`/`hint`，前端只能原样弹字符串，做不了差异化处理；
+- 没有测试钉失败分支，改坏了也没人发现。
+
+**处置（AGENTS 1.7 + docs/guides/ERROR-REPORTING.md）**
+- 失败统一带 `code / title / error / hint / tried`；前端 `ErrorModal` 弹窗给行动按钮（浏览…/下载页），
+  普通提示才用 toast；新增失败断言（本机 30 项测试里 8 项专测失败报告）。
+- 规则写成刚性要求：看得见、给下一步、接口结构化、前端不许吞、失败有测试。
+
+**怎么验证**
+```bash
+cd plugins/surfcore && node scripts/test-snowluma-install.mjs   # 30 项，含失败报告
+cd plugins/surfcore && npm test && npm run test:audit            # 全绿 / 78
+```
+真机：断开/移走 SnowLuma 目录 → 点检测 → 应弹「没找到 SnowLuma」+ 试过位置 + 两个按钮。
+
+**预防 / 下次注意**
+- 写失败分支前先回答三句话：**用户在哪看到？他下一步点什么？我拿什么测它？** 答不上就别提交。
+- 自动探测/自动恢复的功能，兜底入口必须和失败提示在**同一个界面**。
+
+## #82（2026-10-29）提问回答没有身份来源、特权操作没有审计 —— 以及 DSH 单选答案不能 selected+custom 并存
+
+**现象**
+- AI 在群里提问后，任何人的回答都会被原样回给模型；模型无法知道回答者是不是主人，
+  可能把群友的话当成主人确认（身份/权威污染）。
+- 主人特权操作（审批、角色切换、封闭模式、语音、鱼群 bypass、告警）没有独立审计，
+  出问题只能翻 `bridge.log` 猜。
+- 按「在 custom 里加回答者、selected 保持原样」实现时，单选题会被 DSH 判 `bad-response`。
+
+**根因**
+- `handlePendingAnswer` 的 question 分支不用 `isOwner`、不记录 sender；`header` 被桥接丢弃。
+- 没有 `[仅主人]` 分类机制。
+- DSH 的答案结构只有 `selected` / `custom` 两个字段；单选题**必须二选一**
+  （`node_modules/@deepseek-ai/dsh-host-apiproxy/lib/index.js:1316-1318`、README.zh.md:25）。
+
+**处置（2026-10-29，方案 A）**
+- `src/question-answers.js`：`[仅主人]` 只用于收窄回答权；`canConsumePending` 让非主人**不消费** pending、
+  消息继续走群聊；来源由程序按真实 sender 填写。
+- 编码按 DSH 约束：多选 `selected + custom(来源)`；单选 `custom("选项「X」"+来源)`、`selected=[]`。
+- `src/owner-audit.js` + 桥接 7 类事件 + `GET /api/owner-audit`（console token；agent 403）；
+  1MB×5 轮转、90 天清理；写/轮转/清理失败 → health + 限频日志，不静默、不阻塞、不截断。
+- 插件：管理员卡「管理操作记录」弹窗 + 固定路径「打开所在文件夹」；preset 第 17 条提问分类规则。
+
+**怎么验证**
+```bash
+node scripts/test-question-answers.mjs
+node scripts/test-owner-audit.mjs
+npm run test:audit        # 80/80
+npm run test:regressions
+cd plugins/surfcore && npm test
+```
+
+**预防 / 下次注意**
+- 先读依赖的**校验代码**再设计 payload：DSH 的 `selected+custom` 规则是硬约束，不是样式偏好。
+- 身份类信息只从程序判定里来；模型写的标记只能**收窄**，不能授予。
+- 审计失败必须可见（health + 日志），不能“记不上就当没发生”；也不要照抄会丢历史的原地裁剪。
+
+## #83（2026-10-29）语音包“导入”只改了目录，失败还提示成功；pyvenv 不能在临时目录改写
+
+**现象**
+- 设置页「手动指定包目录」只写 `voicePacks.dir`，路径错时仍 toast“✓ 已指向”，
+  刷新后卡片显示“未安装”，没有任何错误。
+- 离线包解压后直接启动会报找不到 `runtime/python*`；因为 `pyvenv.cfg` 还指向构建机路径。
+- 第一版导入在 `.import-*` 临时目录里改 `pyvenv.cfg home`，rename 到标准目录后
+  home 指向已删除的临时目录，解释器仍然起不来。
+
+**根因**
+- 只有“安装源”概念，没有“已解压离线包 → 标准目录”的导入事务；
+- 状态判定只看 `config.toml`，不做结构/manifest 校验；
+- 错误响应没有 `code/hint`，插件 `api()` 只留 `message`；
+- 复制/切换/环境修复没有事务边界，失败会留下半包。
+
+**修法（2026-10-29）**
+- 新增 `src/voice-pack-import.js`：类型/必需文件/manifest 哈希/配置/复制/`pyvenv` 改写；
+- `src/voice-packs.js`：先校验、复制到临时目录、备份旧包、rename 到最终目录，
+  **最后在最终路径改写 `pyvenv.cfg`**；失败恢复备份，恢复失败保留 backup 并报 `IMPORT_ROLLBACK_FAILED`；
+- 默认复制、不移动源目录；源目录/旧备份只能通过记录路径手动删除；
+- 设置页导入按钮 + 确认框 + `ErrorModal`（code/error/hint/missing）+ 进度/取消；
+- 删除旧「手动指定包目录」入口。
+
+**怎么验证**
+```bash
+node scripts/test-voice-pack-import.mjs
+npm run test:audit        # 81/81
+npm run test:regressions
+```
+
+**预防**
+- 任何“导入”先问：源目录是否只读？失败会不会动旧包？环境路径是在临时目录还是最终目录算的？
+- 错误字段必须在桥接 → 插件 → UI 三层都保留；只 toast 不算报错。
+
+## #84（2026-10-29）设置页“下载参考音频”点了没反应
+
+**现象**：云端语音设置第 1 步链接点击无反应，用户拿不到 `小语-参考音频19秒.wav`。
+
+**根因**：桥接 `/api/voice/packs/sample` 本身 200 + WAV 正常；设置页用
+`<a target="_blank">` 直接指向下载接口，DSH/Electron 宿主会拦新窗口/顶层导航，
+没有下载处理器时就表现为“没反应”，且没有失败兜底。
+
+**修法**：改成 `fetch → Blob → a[download]`；旁边加「打开所在目录」
+（插件 `sample-open` → `explorer.exe /select,<file>`）；失败在表单下显示原因。
+**验证**：桥接接口直接请求 200/922604 字节；设置页点击需重启 DSH 后手测。
+
+## #85（2026-10-29）7.9G 离线包导入在 rename 时 EPERM —— Windows 扫描锁超过几秒
+
+**现象**：真实 7.9G 候选包导入，复制到 75% 后 `rename('.import-*','voice-local')`
+报 `EPERM: operation not permitted`；失败后清理临时目录也只删掉一部分。
+
+**根因**：Windows Defender/索引器刚扫描完大目录，目录句柄会短暂占用；
+6 秒（60×100ms）重试不够；失败后的 `rm` 也会遇到同样的锁。
+
+**修法**：`renameWithRetry` 改为 120×500ms（约 60 秒），`removeWithRetry` 改为
+60×500ms；失败重试仍失败才报错并保留临时目录/备份路径。
+**验证**：小夹具通过；真实 7.9G 导入在 120×500ms 重试下成功（目标 7.6G，pyvenv 指向最终目录，源目录保留）。

@@ -25,6 +25,8 @@ import * as fishGuard from '../src/fish-guard.js';
 import * as tokenGuard from '../src/token-guard.js';
 import * as tokenBudget from '../src/token-budget.js';
 import * as adminIdentity from '../src/admin-identity.js';
+import * as questionAnswers from '../src/question-answers.js';
+import * as ownerAudit from '../src/owner-audit.js';
 import * as roleCard from '../src/role-card.js';
 import * as memoryCard from '../src/memory-card.js';
 import * as characterStore from '../src/character-persona.js';
@@ -239,6 +241,7 @@ export async function bridgeHarness({ config = {}, savedState, files = {}, globa
     synthesizeToFile,
     ...tokenBudget,
     ...adminIdentity, ...roleCard, ...memoryCard, ...biliCard, ...characterStore, ...historyCatchup,
+    ...questionAnswers, ...ownerAudit,
     ...purposeEngine,
     ...conversationClosure,
     // 角色系统在 fixture 里等价于「没有角色」：当前角色 null，记忆卡指向 temp/dsh/surfcore/memory。

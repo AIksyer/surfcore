@@ -23,14 +23,14 @@ assert.ok(biliCandidate.some((c) => c.platform === 'bili' && c.counterpart?.id =
 
 const links = [{
   identities: {
-    qq: { id: '10001', name: '阿零', groups: ['100000004'] },
+    qq: { id: '10001', name: '阿零', groups: ['767098733'] },
     bili: { id: '87654321', name: '零酱' },
   },
   source: 'test',
   confidence: 1,
   verified: true,
 }];
-const qqBrief = buildQqAlignmentBrief({ groupIds: ['100000004'], links });
+const qqBrief = buildQqAlignmentBrief({ groupIds: ['767098733'], links });
 assert.ok(qqBrief.includes('零酱'));
 assert.ok(!qqBrief.includes('10001'), 'QQ 对齐简报不应出现 QQ 号（没设称呼时）');
 assert.ok(qqBrief.includes('最高优先级'));
@@ -40,12 +40,12 @@ assert.ok(!qqBrief.includes('优先于人格卡'), '没设称呼时不注入称�
 const biliBrief = buildBiliAlignmentBrief({ links });
 assert.ok(biliBrief.includes('零酱'));
 assert.ok(!biliBrief.includes('10001'), 'B站对齐简报不应出现 QQ 号');
-assert.ok(!biliBrief.includes('100000004'), 'B站对齐简报不应出现群号');
+assert.ok(!biliBrief.includes('767098733'), 'B站对齐简报不应出现群号');
 
 // ── 称呼（label）：以后只叫这个 ──────────────────────────────────────────────
 const labeled = [{
   identities: {
-    qq: { id: '10001', name: '阿零', groups: ['100000004'] },
+    qq: { id: '10001', name: '阿零', groups: ['767098733'] },
     bili: { id: '87654321', name: '零酱' },
   },
   label: '小零',

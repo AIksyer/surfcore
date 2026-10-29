@@ -84,11 +84,11 @@ test('主题轮换：随机 0 取第一条，1 也能正常取', () => {
 
 test('reserved2 提示词必须要求真调发送工具（只输出文字等于没发）', () => {
   const prompt = buildMorningGreetingPrompt({
-    who: '测试对象', uin: '1000000005', time: '08:00', theme: '赖床', mode: 'reserved2',
+    who: '测试对象', uin: '3362299430', time: '08:00', theme: '赖床', mode: 'reserved2',
     token: 'abc123token',
   });
   assert.match(prompt, /qq_send_private_message/);
-  assert.match(prompt, /1000000005/);
+  assert.match(prompt, /3362299430/);
   assert.match(prompt, /token 填 abc123token/, 'reserved2 的发送工具要带会话令牌');
   assert.match(prompt, /纯文本不会自动发到 QQ/);
   assert.match(prompt, /1~2 句/);

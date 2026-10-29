@@ -22,8 +22,8 @@ assert.throws(() => assertSafeOutput('password: hunter2'), /隐私闸门拒绝/)
 assert.doesNotThrow(() => assertSafeOutput('今天看了个视频，挺好笑的'));
 
 assert.equal(isPublicGroupMessage({ key: 'private:12345', groupIds: [], text: 'hi' }).ok, false);
-assert.equal(isPublicGroupMessage({ key: 'group:100000004', groupIds: ['100000004'], text: 'hi' }).ok, true);
-assert.equal(isPublicGroupMessage({ key: 'group:999999999', groupIds: ['100000004'], text: 'hi' }).ok, false);
-assert.equal(isPublicGroupMessage({ key: 'group:100000004', groupIds: ['100000004'], text: '/reset' }).ok, false);
+assert.equal(isPublicGroupMessage({ key: 'group:767098733', groupIds: ['767098733'], text: 'hi' }).ok, true);
+assert.equal(isPublicGroupMessage({ key: 'group:999999999', groupIds: ['767098733'], text: 'hi' }).ok, false);
+assert.equal(isPublicGroupMessage({ key: 'group:767098733', groupIds: ['767098733'], text: '/reset' }).ok, false);
 
 console.log('privacy tests OK');

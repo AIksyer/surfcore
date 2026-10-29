@@ -29,6 +29,7 @@ import { safeFetchBuffer, looksLikeImageBuffer } from './safe-fetch.js';
 import { discoverDshBaseUrl, isLoopbackBaseUrl, probeDshBaseUrl } from './dsh-port.js';
 import { AUDIO_EXTS, cleanupTemp, describeAudio, inspectAudio, listAudioFiles, parseTargetKey, processAudioVolume, resolveAudioProcessing, resolveAudioSource, safeJoinLibrary } from './send-voice-lib.js';
 import { createVoicePacks } from './voice-packs.js';
+import { ImportError } from './voice-pack-import.js';
 import { discoverSnowLumaConnection, persistSnowLumaEndpoint, persistToken } from './snowluma-conn.js';
 import { synthesizeToFile } from './voice-tts.js';
 import { hardenDir, manualDirCommand } from './state-acl.mjs';
@@ -57,6 +58,8 @@ import {
 import {
   adminFromQqConfig, adminMarker, adminPromptBlock,
 } from './admin-identity.js';
+import { isOwnerOnlyFrame, canConsumePending, buildQuestionAnswers } from './question-answers.js';
+import { createOwnerAudit } from './owner-audit.js';
 import { createTokenLedger } from './token-ledger.js';
 import { evaluateWakeBudget, evaluateOutbound, localDayStart } from './token-guard.js';
 import {
@@ -1462,6 +1465,29 @@ function log(...args) {
   try { console.log(line); } catch {}
   appendBridgeLog(`${line}\n`);
 }
+
+// 主人特权操作审计（单写者：桥接；插件只读）。写入失败不阻塞业务，health 由 /api/status 暴露。
+const ownerAudit = createOwnerAudit({ dir: STATE_DIR, log: (...args) => log(...args) });
+const auditOnceAt = new Map();
+function auditOnce(scope, key, ms = 60_000) {
+  const id = `${scope}|${key}`;
+  const last = auditOnceAt.get(id) ?? 0;
+  if (Date.now() - last < ms) return false;
+  auditOnceAt.set(id, Date.now());
+  return true;
+}
+function auditOwner(event, { actor, rule = '', decision = '', ok = true, errorCode = '', ref = null } = {}) {
+  ownerAudit.append(event, {
+    actor: actor ? { platform: 'qq', ...actor } : null,
+    auth: { rule, decision },
+    result: { ok: ok !== false, ...(errorCode ? { errorCode } : {}) },
+    ref,
+  });
+}
+function auditActor(userId, isOwner) {
+  return { id: String(userId ?? ''), isOwner: isOwner === true };
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const convKey = (kind, id) => `${kind}:${id}`;
 const SEND_TIMEOUT_MS = 15000;
@@ -4003,6 +4029,11 @@ async function main() {
         // 因此仅靠控制台令牌挡不住 AI。这里改成白名单：只有 AI 真正需要的面放行，
         // 其余（人格/提示词/思考强度/白名单/重启…）一律 403——避免以后新增管理端点时忘记拉黑。
         if (req.headers['x-agent-token']) {
+          // 审计读取只给控制台：agent token 明确拒绝（即使以后白名单改宽也不放行）。
+          if (url.pathname === '/api/owner-audit') {
+            sendJson({ ok: false, error: '该接口仅控制台可用' }, 403);
+            return;
+          }
           const agentAllowed = url.pathname === '/api/status'
             || url.pathname.startsWith('/api/socialV2/')
             || url.pathname.startsWith('/api/send/')
@@ -4044,6 +4075,11 @@ async function main() {
           }
           return;
         }
+        if (req.method === 'GET' && url.pathname === '/api/owner-audit') {
+          const limit = Math.max(1, Math.min(200, Number(url.searchParams.get('limit')) || 50));
+          sendJson({ ok: true, entries: ownerAudit.readTail(limit), health: ownerAudit.health, path: ownerAudit.path });
+          return;
+        }
         if (req.method === 'GET' && url.pathname === '/api/status') {
           const rs = readRoleState();
           // 带 agent token 的调用来自 QQ 群里的 AI：只能拿到它自己该知道的运行状态。
@@ -4072,6 +4108,7 @@ async function main() {
             roleMode: rs.mode ?? 'active',
             dshReady,
             ownerQQ: cfg.ownerQQ ?? null,
+            ownerAudit: ownerAudit.health,
             allowGroups: cfg.allow?.groups ?? [],
             allowPrivate: cfg.allow?.private ?? [],
             socialV2Paused: socialV2.paused,
@@ -6497,6 +6534,34 @@ async function main() {
               }));
               return;
             }
+            if (req.method === 'POST' && url.pathname === '/api/voice/packs/import-inspect') {
+              const body = await readBody();
+              sendJson(await vp.inspectImport(String(body.id || ''), String(body.sourceDir || '')));
+              return;
+            }
+            if (req.method === 'POST' && url.pathname === '/api/voice/packs/import') {
+              const body = await readBody();
+              sendJson(await vp.startImport(String(body.id || ''), {
+                sourceDir: String(body.sourceDir || ''),
+                allowUnverified: body.allowUnverified === true,
+              }));
+              return;
+            }
+            if (req.method === 'POST' && url.pathname === '/api/voice/packs/import-cancel') {
+              const body = await readBody();
+              sendJson(vp.cancelImport(String(body.id || '')));
+              return;
+            }
+            if (req.method === 'POST' && url.pathname === '/api/voice/packs/import-delete-source') {
+              const body = await readBody();
+              sendJson(await vp.deleteImportSource(String(body.id || ''), String(body.sourceDir || '')));
+              return;
+            }
+            if (req.method === 'POST' && url.pathname === '/api/voice/packs/import-delete-backup') {
+              const body = await readBody();
+              sendJson(await vp.deleteImportBackup(String(body.id || ''), String(body.backupDir || '')));
+              return;
+            }
             if (req.method === 'POST' && url.pathname === '/api/voice/packs/remove') {
               const body = await readBody();
               sendJson(await vp.remove(String(body.id || '')));
@@ -6565,6 +6630,10 @@ async function main() {
             sendJson({ ok: false, error: '未知的语音包操作' }, 404);
             return;
           } catch (e) {
+            if (e instanceof ImportError) {
+              sendJson(e.toJSON(), e.status || 400);
+              return;
+            }
             sendJson({ ok: false, error: String(e?.message || e) }, 400);
             return;
           }
@@ -6708,6 +6777,13 @@ async function main() {
             const m = /^(group|private):(\d+)$/.exec(key);
             const block = m ? voiceTriggerBlock(key, m[1], Number(m[2])) : 'key 格式不对';
             if (block) { sendJson({ ok: false, error: block }, 403); return; }
+            // 语音触发是 owner 授权的特权操作：过闸即记审计（实际发送失败不影响这条授权记录）。
+            auditOwner('voice.trigger', {
+              actor: { id: String(cfg.ownerQQ ?? ''), isOwner: true },
+              rule: 'voice.trigger',
+              decision: 'allow',
+              ref: { session: key },
+            });
           }
           const keyMatch = /^(group|private):(\d+)$/.exec(key);
           if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
@@ -8226,6 +8302,12 @@ async function main() {
             await withTimeout(bot.sendPrivateMessage(Number(cfg.ownerQQ), text(escapeCqText(message))), SEND_TIMEOUT_MS, '记忆卡告警私聊');
             memoryCardNotifyAt.set(level, now);
             log(`已私聊管理员记忆卡容量告警（${percent}%）`);
+            auditOwner('memory.alert', {
+              actor: { id: String(cfg.ownerQQ), isOwner: true },
+              rule: 'ownerQQ',
+              decision: 'allow',
+              ref: { level, percent },
+            });
             sendJson({ ok: true });
           } catch (error) {
             sendJson({ ok: false, error: `发送失败：${error?.message ?? error}` }, 502);
@@ -13573,7 +13655,20 @@ async function main() {
     // 引用对象是机器人自己时，视为直接对 AI 说（即使当前文字没有 @/关键词）。
     // 因此必须先解析 quoteTargetIsSelf 再做空文本过滤，避免“只引用不附文”被漏掉。
     const quoteTargetIsSelf = await isQuoteTargetSelf(event.message ?? [], kind, id, event.self_id);
-    if (!isSessionAllowedInCurrentMode(key)) return;
+    if (!isSessionAllowedInCurrentMode(key)) {
+      // 封闭模式只放行主人私聊；拒绝也要留审计（按会话限频，避免群消息刷屏）。
+      if (currentMode === 'closed-agent' && auditOnce('closed-agent-deny', key, 60_000)) {
+        auditOwner('closed-agent.access', {
+          actor: auditActor(event.user_id, String(event.user_id) === String(cfg.ownerQQ ?? '')),
+          rule: 'closed-agent',
+          decision: 'deny',
+          ok: false,
+          errorCode: 'not-owner-private',
+          ref: { session: key },
+        });
+      }
+      return;
+    }
     // 任何入站消息（含纯图片/表情/引用）都先记「谁在说话」，且必须在下面的空文本过滤之前：
     // 语音触发判定只认这条记录，漏记就等于给"换个人来喊"留了后门。
     {
@@ -13599,9 +13694,20 @@ async function main() {
     // 若该会话有挂起的提问/审批，先当作回答处理（用当前消息自己的文字，不含引用原文）。
     // 审批只有管理员消息会被消费；群友消息不能因为“审批挂起”而被吞掉，应继续走正常处理。
     const p = pending.get(key);
-    if (p && (p.kind === 'question' || isOwner)) {
-      await handlePendingAnswer(p, plainContent, key, isOwner);
+    if (canConsumePending(p, isOwner)) {
+      await handlePendingAnswer(p, plainContent, key, isOwner, String(event.user_id ?? ''), displayName);
       return;
+    }
+    // 带 [仅主人] 的提问 + 非主人：不消费、不回传答案、不吞消息，继续走正常群聊。
+    if (p && p.kind === 'question' && p.ownerOnly === true && !isOwner && auditOnce('question-deny', key, 60_000)) {
+      auditOwner('question.answer', {
+        actor: auditActor(event.user_id, false),
+        rule: 'ownerOnly',
+        decision: 'deny',
+        ok: false,
+        errorCode: 'not-owner',
+        ref: { session: key },
+      });
     }
 
     // 静默模式：群友消息不投递给 agent（只记录）；管理员消息照常
@@ -13620,6 +13726,16 @@ async function main() {
     // 管理命令：仅管理员（ownerQQ）可用，且由桥接直接执行（硬性，不经过模型）
     if (plainContent.startsWith('/')) {
       if (!isOwner) {
+        if (/^\/role\b/.test(plainContent)) {
+          auditOwner('role.switch', {
+            actor: auditActor(event.user_id, false),
+            rule: 'ownerQQ',
+            decision: 'deny',
+            ok: false,
+            errorCode: 'not-owner',
+            ref: { session: key },
+          });
+        }
         await sendToQQ(key, '管理命令仅管理员可用。');
         return;
       }
@@ -13685,6 +13801,12 @@ async function main() {
         const name = sanitizeRoleName(plainContent.slice(5).trim());
         if (!name || name === 'off' || name === 'clear') {
           writeRoleState(null, roleState.mode);
+          auditOwner('role.switch', {
+            actor: auditActor(event.user_id, true),
+            rule: 'ownerQQ',
+            decision: 'allow',
+            ref: { session: key, role: '(clear)' },
+          });
           await sendToQQ(key, '已清除角色，恢复正常人格。');
         } else {
           const roleFile = path.join(ROOT, 'roles', name + '.md');
@@ -13692,6 +13814,12 @@ async function main() {
             await sendToQQ(key, `角色「${name}」不存在。角色文件放 qq-bridge/roles/ 目录。`);
           } else {
             writeRoleState(name, roleState.mode);
+            auditOwner('role.switch', {
+              actor: auditActor(event.user_id, true),
+              rule: 'ownerQQ',
+              decision: 'allow',
+              ref: { session: key, role: name },
+            });
             await sendToQQ(key, `已切换角色：${name}。`);
           }
         }
@@ -13739,6 +13867,14 @@ async function main() {
       if (fish.rawBlocked && fish.bypass) {
         st.fishGuardBypass = { at: Date.now(), until: fish.until, reason: fish.reason, direct: !isOwner, owner: isOwner };
         try { saveSocialV2State(); } catch {}
+        if (isOwner && auditOnce('fish-bypass', key, 60_000)) {
+          auditOwner('fish.bypass', {
+            actor: auditActor(event.user_id, true),
+            rule: 'ownerQQ',
+            decision: 'allow',
+            ref: { session: key },
+          });
+        }
       }
       // 对方又开口：上次的收尾记录保留，但标记为「已重开」（下次提示词会说是新的开始）。
       noteClosureReopenV2(key, st, {
@@ -14049,15 +14185,11 @@ async function main() {
   }
 
   // 回答挂起的提问/审批
-  async function handlePendingAnswer(p, answerText, key, isOwner = false) {
+  async function handlePendingAnswer(p, answerText, key, isOwner = false, senderId = '', senderName = '') {
     if (p.kind === 'question') {
-      const answers = [];
-      for (const q of p.questions) {
-        const opts = q.options ?? [];
-        const hit = opts.find((o) => o.label.trim().toLowerCase() === answerText.trim().toLowerCase());
-        if (hit) answers.push({ id: q.id, selected: [hit.label] });
-        else answers.push({ id: q.id, selected: [], custom: answerText });
-      }
+      // 防御：owner-only 的提问即使被调用也拒绝（正常路径在消费点已经拦住）。
+      if (p.ownerOnly === true && !isOwner) return;
+      const answers = buildQuestionAnswers(p, answerText, { isOwner, sender: senderName });
       try {
         const receipt = await api.respond({
           clientId: p.clientId,
@@ -14065,6 +14197,12 @@ async function main() {
           outcome: { kind: 'result', value: { answers } }
         });
         log(`已回答提问 (${key}):`, receipt);
+        auditOwner('question.answer', {
+          actor: auditActor(senderId, isOwner),
+          rule: p.ownerOnly === true ? 'ownerOnly' : 'anyone',
+          decision: 'allow',
+          ref: { session: key },
+        });
         // 只有回执成功才移除挂起，且必须仍是同一个挂起（防止期间被新请求覆盖）
         if (pending.get(key) === p) pending.delete(key);
       } catch (error) {
@@ -14094,6 +14232,12 @@ async function main() {
         });
         log(`已处理审批 (${key}): ${outcome}`, receipt);
         await sendToQQ(key, outcome === 'allowed-once' ? '✅ 已通过审批' : '❌ 已拒绝审批');
+        auditOwner('approval.answer', {
+          actor: auditActor(senderId, isOwner),
+          rule: 'ownerQQ',
+          decision: outcome === 'allowed-once' ? 'allow' : 'deny',
+          ref: { session: key, approvalId: p.approvalId ?? '' },
+        });
         // 只有回执成功才移除挂起，且必须仍是同一个挂起（防止期间被新请求覆盖）
         if (pending.get(key) === p) pending.delete(key);
       } catch (error) {
@@ -14189,6 +14333,8 @@ async function main() {
       }
     }, cfg.questionTimeoutMs);
     entry.timer = timer;
+    // [仅主人] 是模型写的分类标记，只用于**收窄**谁能回答，绝不作为任何授权凭证。
+    if (entry.kind === 'question') entry.ownerOnly = isOwnerOnlyFrame(entry.questions);
     pending.set(key, entry);
   }
 

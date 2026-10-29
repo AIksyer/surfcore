@@ -18,7 +18,7 @@ function test(name, run) {
   catch (error) { fail += 1; console.error('FAIL', name, error.message); }
 }
 const local = (h, m = 0, day = 24) => new Date(2026, 9, day, h, m, 0, 0).getTime(); // 2026-10-24 本地
-const owner = '1000000001';
+const owner = '3287064288';
 
 test('配置归一化：默认值 / owner 回退 / 区间收敛 / 安静时段格式', () => {
   const c = normalizePurposeConfig({}, { ownerQQ: owner });

@@ -26,13 +26,13 @@ function test(name, run) {
   catch (error) { failures++; console.error('FAIL', name, error.message); }
 }
 
-const IDS = ['1000000001', '10000002', '111222333'];
+const IDS = ['3287064288', '37634003', '111222333'];
 
 // ── 纯函数 ─────────────────────────────────────────────────────────────────
 test('已知 ID 精确命中', () => {
-  const hits = findIdentityLeaks('主人的B站是 10000002 哦', { ids: IDS });
+  const hits = findIdentityLeaks('主人的B站是 37634003 哦', { ids: IDS });
   assert.equal(hits.length, 1);
-  assert.equal(hits[0].value, '10000002');
+  assert.equal(hits[0].value, '37634003');
   assert.equal(hits[0].kind, 'known-id');
 });
 
@@ -55,11 +55,11 @@ test('空文本不算泄露', () => {
 });
 
 test('错误信息里的号码是打码的（错误本身也可能被贴进日志）', () => {
-  const hits = findIdentityLeaks('主人QQ 1000000001', { ids: IDS });
+  const hits = findIdentityLeaks('主人QQ 3287064288', { ids: IDS });
   const message = formatIdentityLeakError(hits, 'B站 评论');
   assert.match(message, /B站 评论/);
   assert.match(message, /328\*\*\*\*288/, message);
-  assert.ok(!message.includes('1000000001'), '错误信息里不能出现完整号码');
+  assert.ok(!message.includes('3287064288'), '错误信息里不能出现完整号码');
   assert.match(message, /只用来认自己|不许外传/);
   assert.equal(maskLeakValue('123456789'), '123****789');
   assert.equal(maskLeakValue('abc'), 'abc');
@@ -69,33 +69,33 @@ test('错误信息里的号码是打码的（错误本身也可能被贴进日�
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'identity-guard-'));
 try {
   fs.writeFileSync(path.join(temp, 'config.json'), JSON.stringify({
-    admin: { qq: '1000000001', biliMid: '10000002', biliName: '主人' },
+    admin: { qq: '3287064288', biliMid: '37634003', biliName: '主人' },
   }));
   fs.writeFileSync(path.join(temp, 'bili.config.json'), JSON.stringify({
-    owner: { mid: '10000002', name: '主人' },
-    self: { mid: '1000000003', name: '小肥鱼' },
+    owner: { mid: '37634003', name: '主人' },
+    self: { mid: '1483638708', name: '小肥鱼' },
   }));
   fs.writeFileSync(path.join(temp, 'alignments.json'), JSON.stringify({
     links: [
       { identities: { qq: { id: '111222333' }, bili: { id: '99887766' } } },
       // 她自己的映射：B站 mid 允许出现在自己的公开内容里，但 QQ 号仍然不许外传
-      { identities: { qq: { id: '444555666' }, bili: { id: '1000000003' } } },
+      { identities: { qq: { id: '444555666' }, bili: { id: '1483638708' } } },
     ],
   }));
 
   test('受保护名单 = 主人 QQ/mid + 对齐表里别人的号；自己的 B站 mid 不拦', () => {
     const ids = collectProtectedIdentities({ surfcoreDir: temp });
-    for (const wanted of ['1000000001', '10000002', '111222333', '99887766', '444555666']) {
+    for (const wanted of ['3287064288', '37634003', '111222333', '99887766', '444555666']) {
       assert.ok(ids.includes(wanted), `缺少 ${wanted}`);
     }
-    assert.ok(!ids.includes('1000000003'), '自己的 B站 mid 不该被拦（那是公开资料）');
+    assert.ok(!ids.includes('1483638708'), '自己的 B站 mid 不该被拦（那是公开资料）');
   });
 
   test('assertOutboundIdentitySafe：泄露就抛，干净就放行', () => {
-    assert.throws(() => assertOutboundIdentitySafe('看主人的空间 10000002', { surface: 'B站 评论', surfcoreDir: temp }), /B站 评论/);
+    assert.throws(() => assertOutboundIdentitySafe('看主人的空间 37634003', { surface: 'B站 评论', surfcoreDir: temp }), /B站 评论/);
     assert.throws(() => assertOutboundIdentitySafe('QQ 111222333', { surface: 'B站 私信', surfcoreDir: temp }), /B站 私信/);
     assert.equal(assertOutboundIdentitySafe('这视频真好看，2026 年还能看到', { surfcoreDir: temp }).ok, true);
-    assert.equal(assertOutboundIdentitySafe('我的空间 space.bilibili.com/1000000003', { surfcoreDir: temp }).ok, true);
+    assert.equal(assertOutboundIdentitySafe('我的空间 space.bilibili.com/1483638708', { surfcoreDir: temp }).ok, true);
   });
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });

@@ -25,7 +25,7 @@ const clipped = clipForVoice(long, 18);
 assert.ok(clipped.length <= 19, `截断后应不超过上限：${clipped.length}`);
 assert.ok(clipped.endsWith('。') || clipped.endsWith('…'), `应在句号处截断：${clipped}`);
 assert.equal(clipForVoice('啊'.repeat(50), 20).length <= 21, true);
-assert.equal(stripStageDirections('（笑）在呀 (挥挥手) 主人'), '在呀 主人');
+assert.equal(stripStageDirections('（笑）在呀 (挥挥手) 弥叭'), '在呀 弥叭');
 
 // ── 回复清理 ────────────────────────────────────────────────────────────────
 assert.equal(cleanReply('小肥鱼：在呢'), '在呢');

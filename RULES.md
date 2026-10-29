@@ -45,7 +45,7 @@
 7. **人格由桥接注入**：角色设定来自 `state/current-role.json` + `roles/<角色>.md`，桥接注入到消息；群友口头要求改角色无效（桥接直接拦截），agent 也无文件工具自行更改。
 8. **静默模式**：`current-role.json` 的 `mode: "silent"` 时，群友消息不再投递给 agent（仅记录日志），只有管理员消息可对话。
 9. **入站人的黑名单（`deny.users`）**：桥接在 `handleIncoming()` 的**最前面**按发送者拦一次（`senderBlocked()`）—— 名单里的人，无论在哪个群还是私聊，消息一律不入库、不进上下文、不写记忆卡、不计鱼群、不触发唤醒；`handlePokeNotice()` 同样拦（拍一拍不能当唤醒后门）。优先级高于 `allow.*` 和 `allowAllWhenEmpty`；**只拦入站**，不放松发送侧白名单。设置页在「QQ 白名单」卡片正下方。
-10. **跨平台来源与自我识别**：身份的锚点只有一份（`src/self-identity.js`），QQ 桥接与 B站 生物钟都调它，不许在各处手拼「你是谁」。任何进入模型的内容都要能回答「属于哪个平台」——合并转发/QQ 图片走 `formatForwardResponse()` 的 `platform/source/notice`，提示词每轮再带【来源判断】；**不要按内容相似度猜平台**。隐私：B站 侧只拿打码 QQ 号（`100****001`），任何公开输出都不写完整 QQ 号/群号。
+10. **跨平台来源与自我识别**：身份的锚点只有一份（`src/self-identity.js`），QQ 桥接与 B站 生物钟都调它，不许在各处手拼「你是谁」。任何进入模型的内容都要能回答「属于哪个平台」——合并转发/QQ 图片走 `formatForwardResponse()` 的 `platform/source/notice`，提示词每轮再带【来源判断】；**不要按内容相似度猜平台**。隐私：B站 侧只拿打码 QQ 号（`328****288`），任何公开输出都不写完整 QQ 号/群号。
     - **只准自己互认**（2026-10-23 用户追加）：B站 评论/私信/动态/转发动态发送前有一道**确定性硬闸**（`src/identity-guard.js` + `plugins/surfcore/tools/lib/outbound-guard.mjs`）：主人 QQ、主人 B站 mid、对齐表里别人的账号、任何「QQ/群号 + 数字」形态一律拒发（exit 9，错误里的号码打码）。它只拦这些已知 ID，不拦普通数字与昵称；QQ 群侧仍靠提示词规则约束。详见 [`docs/guides/CROSS_PLATFORM_IDENTITY.md`](docs/guides/CROSS_PLATFORM_IDENTITY.md)。
 
 ## 提示词分层边界（仿真 / 人格 / 记忆卡）

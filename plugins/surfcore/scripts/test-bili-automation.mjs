@@ -29,7 +29,7 @@ process.env.SURFCORE_BILI_CONFIG = path.join(dshHome, 'surfcore', 'bili.config.j
 
 fs.writeFileSync(path.join(fakeRoot, 'src', 'bridge.js'), '// fixture\n');
 fs.writeFileSync(path.join(fakeRoot, 'config.json'), JSON.stringify({
-  allow: { groups: ['100000004'] },
+  allow: { groups: ['767098733'] },
   biliBridge: {
     enabled: true,
     share: { enabled: true, times: ['09:00', '21:00'], groups: [], gapMs: 4000, card: true },
@@ -155,7 +155,7 @@ assert.ok(snap.dynamics.next, '应能算出下一类动态');
 assert.deepEqual(snap.qqShare.times, ['09:00', '21:00']);
 assert.ok(snap.qqShare.nextAt, '应能算出下一班 QQ 分享');
 assert.ok(snap.qqShare.lastSlot.includes('09:00'));
-assert.ok(snap.qqShare.groupsEffective.includes('100000004'), 'groups 留空时应回落到 allow.groups');
+assert.ok(snap.qqShare.groupsEffective.includes('767098733'), 'groups 留空时应回落到 allow.groups');
 assert.equal(snap.qqShare.cardMode, 'text', '旧 card:true 快照要报文本链接（QQ 卡片显示不了）');
 assert.equal(snap.qqShare.card, true);
 assert.ok(snap.dynamicsSync.lastPollAt);

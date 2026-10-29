@@ -1,5 +1,5 @@
 // B站 会话权限自动校正（2026-10-23）。
-// 背景：会话 cwd=C:\Users\<用户名> 在 workspace-write 下起不了命令，定时任务只能干等审批。
+// 背景：会话 cwd=C:\Users\Mieksido 在 workspace-write 下起不了命令，定时任务只能干等审批。
 // 这里只测纯逻辑（mock ctx.permissionPresets / ctx.sessions），不碰真实 DSH。
 import assert from 'node:assert/strict';
 import { applySessionPermission, applySessionPermissionTo } from '../plugins/surfcore/lib/scheduler.js';

@@ -67,11 +67,11 @@ assert.equal(ark.prompt, '[分享] 测试 标题 带换行');
     sendGroupSegments: async (id, segments) => { sent.push({ id, segments }); },
     log: () => {},
   });
-  const ok = await send('group:100000004', { bvid: BV, title: '标题', pic: 'http://i0.hdslb.com/c.jpg', reason: '好看' });
+  const ok = await send('group:767098733', { bvid: BV, title: '标题', pic: 'http://i0.hdslb.com/c.jpg', reason: '好看' });
   assert.equal(ok, true);
   assert.equal(miniCalls, 0, 'text 模式绝不能调 get_mini_app_ark');
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].id, '100000004');
+  assert.equal(sent[0].id, '767098733');
   assert.equal(sent[0].segments.length, 1);
   assert.equal(sent[0].segments[0].type, 'text', '默认路径必须是纯文本，不是 json 卡片');
   assert.match(sent[0].segments[0].data.text, /【B站】标题/);

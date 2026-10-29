@@ -110,7 +110,7 @@ function alignmentBlockForBili() {
  * 于是别人把她的 QQ 主页截图甩过来，她只会当陌生人。锚点来源：
  *   · QQ 昵称 / QQ 号 ← 桥接登录时落的 `state/self-identity.json`（B站 进程拿不到网关）；
  *   · B站 昵称 / UID / 人格名 ← `bili.config.json` 的 self / persona。
- * 隐私：QQ 号在这里**打码**（100****001），够认人，又不至于被她写进公开评论。
+ * 隐私：QQ 号在这里**打码**（328****288），够认人，又不至于被她写进公开评论。
  */
 function selfIdentityBlockForBili() {
   const qqSelf = readQqSelfIdentity(QQ_STATE_DIR)

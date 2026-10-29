@@ -454,7 +454,7 @@ curl -G 'https://api.live.bilibili.com/xlive/web-room/v1/dM/gethistory' \
       {
         "text": "‫",
         "dm_type": 0,
-        "uid": 10000007,
+        "uid": 20276964,
         "nickname": "咸菜拉面",
         "uname_color": "",
         "timeline": "2024-08-15 05:05:06",
@@ -532,7 +532,7 @@ curl -G 'https://api.live.bilibili.com/xlive/web-room/v1/dM/gethistory' \
         },
         "group_medal": null,
         "user": {
-          "uid": 10000007,
+          "uid": 20276964,
           "base": {
             "name": "咸菜拉面",
             "face": "https://i0.hdslb.com/bfs/face/182b73f6b6274fcee7491219f511b1748c4bc712.jpg",
@@ -588,7 +588,7 @@ curl -G 'https://api.live.bilibili.com/xlive/web-room/v1/dM/gethistory' \
       {
         "text": "‫",
         "dm_type": 0,
-        "uid": 10000007,
+        "uid": 20276964,
         "nickname": "咸菜拉面",
         "uname_color": "",
         "timeline": "2024-08-16 05:05:06",
@@ -666,7 +666,7 @@ curl -G 'https://api.live.bilibili.com/xlive/web-room/v1/dM/gethistory' \
         },
         "group_medal": null,
         "user": {
-          "uid": 10000007,
+          "uid": 20276964,
           "base": {
             "name": "咸菜拉面",
             "face": "https://i0.hdslb.com/bfs/face/182b73f6b6274fcee7491219f511b1748c4bc712.jpg",
@@ -1217,7 +1217,7 @@ curl -G 'https://api.live.bilibili.com/xlive/web-room/v1/dM/gethistory' \
       {
         "text": "‫",
         "dm_type": 0,
-        "uid": 10000007,
+        "uid": 20276964,
         "nickname": "咸菜拉面",
         "uname_color": "",
         "timeline": "2024-08-17 05:05:07",
@@ -1295,7 +1295,7 @@ curl -G 'https://api.live.bilibili.com/xlive/web-room/v1/dM/gethistory' \
         },
         "group_medal": null,
         "user": {
-          "uid": 10000007,
+          "uid": 20276964,
           "base": {
             "name": "咸菜拉面",
             "face": "https://i0.hdslb.com/bfs/face/182b73f6b6274fcee7491219f511b1748c4bc712.jpg",
@@ -1485,7 +1485,7 @@ curl -G 'https://api.live.bilibili.com/xlive/web-room/v1/dM/gethistory' \
       {
         "text": "‫",
         "dm_type": 0,
-        "uid": 10000007,
+        "uid": 20276964,
         "nickname": "咸菜拉面",
         "uname_color": "",
         "timeline": "2024-08-18 05:05:05",
@@ -1563,7 +1563,7 @@ curl -G 'https://api.live.bilibili.com/xlive/web-room/v1/dM/gethistory' \
         },
         "group_medal": null,
         "user": {
-          "uid": 10000007,
+          "uid": 20276964,
           "base": {
             "name": "咸菜拉面",
             "face": "https://i0.hdslb.com/bfs/face/182b73f6b6274fcee7491219f511b1748c4bc712.jpg",
