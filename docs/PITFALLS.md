@@ -2822,3 +2822,19 @@ stdout 默认 OEM/GBK，Node 按 UTF-8 解码 → 中文路径损坏。
 **修法**：PowerShell 把选中路径写进 UTF-8 临时文件（`UTF8Encoding($false)`），
 Node 读文件后删除；不再解析 stdout。所有「浏览…」共用此函数。
 **验证**：`node --check` + 临时文件中文路径读写一致；真实选择框需重启 DSH 后手测。
+
+## #87（2026-10-29）设置称呼「弥叭」，QQ 仍叫「管理员」
+
+**现象**：unified 的 `admin.displayName=弥叭`，但 QQ `config.json` 的 `admin` 是 null；
+提示词生成 `称呼「管理员」`，模型拼成「弥叭管理员」。
+
+**根因**：
+1. `projectAdminSave` 的 outQq 只投影 ownerQQ，没带 displayName/biliName/gentle；
+2. 桥接只读 config.json，读不到 unified；
+3. `adminDisplayName` 兜底返回 `'管理员'`，把身份词伪装成称呼；
+4. 桥接只在启动时读配置，改完不重启不生效。
+
+**修法**：outQq 带完整 admin 投影；`adminDisplayName` 空串兜底；提示词明确
+「管理员是身份不是称呼」；插件启动时 `ensureAdminProjection()` 补投影，
+桥接在跑则自动重启；补单测钉住 qq.admin.displayName 与无称呼提示词。
+**验证**：`test-admin-identity`、`test-admin-prompt-wiring`、`test:audit`。

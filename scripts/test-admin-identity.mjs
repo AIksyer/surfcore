@@ -12,7 +12,7 @@
  */
 import assert from 'node:assert/strict';
 import {
-  adminConfigured, adminFromQqConfig, adminFromSources, adminMarker, adminPromptBlock,
+  adminConfigured, adminDisplayName, adminFromQqConfig, adminFromSources, adminMarker, adminPromptBlock,
   adminSummary, normalizeAdmin, projectAdminSave, resolveAdminUpdate,
 } from '../src/admin-identity.js';
 
@@ -52,6 +52,13 @@ assert.equal(explicitEmpty.qq, '', '显式清空必须生效，不能被旧字�
 assert.equal(explicitEmpty.biliMid, '20002', '没被清空的一边仍保留');
 
 assert.equal(adminFromQqConfig({ ownerQQ: '10001' }).qq, '10001', '桥接只读 config.json 也要能认出管理员');
+assert.equal(
+  adminFromSources({ unified: {}, qq: { admin: { qq: '10001', displayName: '小语', gentle: true } } }).displayName,
+  '小语',
+  'unified 还没写 admin 时，QQ 已有投影不能丢称呼',
+);
+assert.equal(adminDisplayName(adminFromQqConfig({ admin: { qq: '111111', displayName: '小语' }, ownerQQ: '999999' })), '小语', '桥接必须能读到 admin.displayName');
+assert.equal(adminDisplayName(normalizeAdmin({ qq: '10001' })), '', '没填称呼时不能把“管理员”当名字');
 assert.equal(adminFromQqConfig({ admin: { qq: '111111', biliMid: '20002' }, ownerQQ: '999999' }).qq, '111111', 'admin 优先于 ownerQQ');
 
 // ── 3. 保存冲突合并 ────────────────────────────────────────────────────────
@@ -109,6 +116,12 @@ assert.ok(!mild.includes('绝不回嘴'), '关掉温柔模式后不再注入语�
 assert.ok(mild.includes('10001'), '但身份仍要保留');
 
 assert.equal(adminPromptBlock('qq', normalizeAdmin({})), '', '未配置管理员时不占提示词');
+const unnamed = adminPromptBlock('qq', normalizeAdmin({ qq: '10001', gentle: true }));
+assert.ok(!unnamed.includes('称呼「管理员」'), '没填称呼时不得把“管理员”当称呼');
+assert.ok(unnamed.includes('直接称呼「你」'), '没填称呼时要明确用“你”');
+const namedPrompt = adminPromptBlock('qq', normalizeAdmin({ qq: '10001', displayName: '小语', gentle: true }));
+assert.ok(namedPrompt.includes('称呼「小语」'), '有称呼时必须用设置值');
+assert.ok(namedPrompt.includes('身份/权限标记'), '必须说明“管理员”是身份不是称呼');
 assert.equal(adminPromptBlock('bili', normalizeAdmin({})), '');
 
 assert.equal(adminMarker(admin), '【管理员·温柔】');
@@ -135,6 +148,7 @@ const uiUnified = { version: 1, persona: { file: 'roles/角色.md' } };
 const unchanged = projectAdminSave({ current: legacyCurrent, qq: uiQq, bili: uiBili, unified: uiUnified });
 assert.equal(unchanged.admin.qq, '10001');
 assert.equal(unchanged.qq.ownerQQ, '10001', '正常保存后 QQ ownerQQ 必须还在');
+assert.equal(unchanged.qq.admin.displayName, '测试B站昵称', 'QQ 投影必须带上 displayName（桥接读不到 unified）');
 assert.equal(unchanged.qq.consolePort, 3100, '其它 QQ 参数不能被截断');
 assert.equal(unchanged.bili.owner.mid, '20002', '正常保存后 B站 owner.mid 必须还在');
 assert.equal(unchanged.unified.admin.qq, '10001', '合体层 admin 必须落盘');
@@ -148,6 +162,7 @@ const cardEdit = projectAdminSave({
   unified: { ...uiUnified, admin: { qq: '100001', biliMid: '200002', biliName: '新主人', displayName: '新称呼', gentle: true } },
 });
 assert.equal(cardEdit.qq.ownerQQ, '100001', '管理员卡片改 QQ 必须落到 config.json');
+assert.equal(cardEdit.qq.admin.displayName, '新称呼', '改称呼必须投影到 QQ config.json');
 assert.equal(cardEdit.bili.owner.mid, '200002', '管理员卡片改 B站 UID 必须落到 bili.config.json');
 assert.equal(cardEdit.bili.owner.name, '新主人');
 assert.equal(cardEdit.unified.admin.displayName, '新称呼');
@@ -158,6 +173,7 @@ const onlyAdmin = projectAdminSave({
   unified: { admin: { qq: '100001', biliMid: '200002', biliName: '新主人', displayName: '新称呼', gentle: true } },
 });
 assert.equal(onlyAdmin.qq.ownerQQ, '100001', '没有 qq 对象时也要补 ownerQQ 投影');
+assert.equal(onlyAdmin.qq.admin.displayName, '新称呼', '没有 qq 对象时也要补称呼投影');
 assert.equal(onlyAdmin.bili.owner.mid, '200002', '没有 bili 对象时也要补 owner 投影');
 assert.equal(onlyAdmin.unified.admin.qq, '100001');
 

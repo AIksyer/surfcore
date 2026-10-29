@@ -72,7 +72,7 @@ import { createPetPurposeService } from './pet-purpose.js';
 import { createPetApiService } from './pet-api.js';
 import { createUpdatesService, resumePendingApply } from './updates.js';
 import {
-  adminFromSources, adminSummary, projectAdminSave,
+  adminFromSources, adminSummary, normalizeAdmin, projectAdminSave,
 } from '../../../src/admin-identity.js';
 import {
   applyMemoryCardAction, compactMemoryCardNow, fullMemoryCardSnapshot, memoryCardIdle, memoryCardSnapshot,
@@ -376,6 +376,42 @@ export function apply(ctx) {
     return schedulerStatus;
   }
   startSchedulerNow();
+
+  // 管理员称呼的存量修复：v0.7.2 及以前只把 ownerQQ 投影到 QQ config.json，
+  // displayName/biliName/gentle 留在 unified，桥接独立进程读不到 → 叫“管理员”。
+  // 启动时补一次投影（有变化才写），桥接在跑就重启让它重新读配置。
+  function ensureAdminProjection() {
+    try {
+      const qqState = readQqConfig();
+      const unifiedState = readUnified();
+      const biliState = readBiliConfig();
+      const unifiedAdmin = unifiedState.hasAdmin ? unifiedState.config?.admin : undefined;
+      const sourceAdmin = unifiedAdmin ?? qqState.config?.admin;
+      const current = adminFromSources({
+        unified: { admin: sourceAdmin },
+        qq: qqState.config,
+        bili: biliState.config,
+      });
+      if (!current.qq && !current.biliMid) return;
+      const next = normalizeAdmin(current);
+      const prev = normalizeAdmin(qqState.config?.admin);
+      if (JSON.stringify(prev) === JSON.stringify(next)) return;
+      const planned = projectAdminSave({ current: next, qq: qqState.config });
+      if (!planned.qq) return;
+      saveQqConfig(planned.qq);
+      pluginLog('管理员称呼已补齐到 QQ config.json（桥接重启后生效）');
+      setTimeout(() => {
+        void bridgeStatus().then((st) => {
+          if (!st.running) return;
+          return restartBridge({ dshWebUrl: currentDshUrl() });
+        }).catch(() => {});
+      }, 1500).unref?.();
+    } catch (error) {
+      pluginLog('管理员称呼投影失败（继续使用现有配置）：', error?.message ?? error);
+    }
+  }
+
+  ensureAdminProjection();
 
   // ── 角色人格：启动迁移 + 切换编排 ───────────────────────────────────────
   // 迁移只做一次：有旧记忆/旧 B站 账本才建第一个角色；旧目录原样保留作冷备份。
