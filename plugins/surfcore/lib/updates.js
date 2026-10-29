@@ -286,10 +286,21 @@ export async function inspectVersionComponent(component, { fetch: doFetch = true
   try {
     const pkgManifest = path.join(dir, 'release', 'install-manifest.json');
     const installedManifest = path.join(dir, '.installed-manifest.json');
-    if (installedVersion && fs.existsSync(pkgManifest) && !fs.existsSync(installedManifest)) {
-      fs.copyFileSync(pkgManifest, installedManifest);
-      if (!fs.existsSync(path.join(dir, '.installed-meta.json'))) writeInstalledMeta(dir, { version: installedVersion });
-      meta = readInstalledMeta(dir);
+    if (installedVersion && fs.existsSync(pkgManifest)) {
+      let installedManifestVersion = '';
+      try { installedManifestVersion = String(JSON.parse(fs.readFileSync(installedManifest, 'utf8')).version ?? ''); } catch {}
+      // 手动覆盖安装后，旧清单/旧提交号还留在目录里 → 会拿"旧提交 vs 远端"比出假更新
+      // （用户升到 0.7.5 仍被提示 v0.7.3→db18896）。版本对不上就地刷新证据。
+      const stale = !installedManifestVersion || installedManifestVersion !== installedVersion;
+      if (stale) {
+        fs.copyFileSync(pkgManifest, installedManifest);
+        // 版本变了，旧 sha 已不代表当前文件；写回只有版本号的记录（走版本号比对）
+        writeInstalledMeta(dir, { version: installedVersion });
+        meta = readInstalledMeta(dir);
+      } else if (!fs.existsSync(path.join(dir, '.installed-meta.json'))) {
+        writeInstalledMeta(dir, { version: installedVersion });
+        meta = readInstalledMeta(dir);
+      }
     }
   } catch { /* 补登记失败不致命，下面会按缺证据处理 */ }
   if (!dir) return { ...base, available: false, installedVersion: '', reason: '安装目录不存在（还没装）' };
@@ -822,6 +833,23 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
       };
     }
   } catch { /* 第一次跑 / 文件坏了：用默认值，不炸 */ }
+
+  // 手动覆盖安装后，磁盘上的版本已经变了，但 updates.json 里还是上次检查的旧结果
+  // （用户升到 0.7.5 仍弹 "v0.7.3 → db18896"）。启动时把"版本对不上"的结果丢掉，
+  // 下一次检查会重新按当前版本算。
+  try {
+    const before = (state.results ?? []).length;
+    state.results = (state.results ?? []).filter((row) => {
+      const dir = normalizeDir(row?.dir);
+      if (!dir) return true;
+      try {
+        const v = String(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version ?? '');
+        if (v && row.installedVersion && String(row.installedVersion) !== v) return false;
+      } catch { /* 读不到就保留，交给下一次检查 */ }
+      return true;
+    });
+    if ((state.results ?? []).length !== before) persist();
+  } catch { /* 校准失败不阻塞启动 */ }
 
   let checking = false;
   let applying = false;

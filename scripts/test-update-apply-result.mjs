@@ -268,6 +268,28 @@ try {
     ok(fs.existsSync(path.join(okRun.target, '.installed-manifest.json')), '助手：写入安装清单副本');
   }
 
+  // 5.6) 磁盘版本变了 → 旧的检查结果要丢弃（否则弹窗显示 v0.7.3→旧提交）
+  {
+    const dir = makeTarget('stale-results', '0.7.5', { withMeta: true });
+    const stateDir = path.join(dir, '.state');
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(path.join(stateDir, 'updates.json'), JSON.stringify({
+      lastCheckAt: Date.now(),
+      results: [{
+        id: 'surfcore', name: 'SurfCore 本体', dir, available: true,
+        installedVersion: '0.7.3', latestVersion: 'db18896', updateAvailable: true,
+      }],
+    }));
+    const svc = createUpdatesService({
+      stateDir,
+      components: () => [{ id: 'surfcore', name: 'SurfCore 本体', dir, kind: 'version', versionRepo: 'Mieksido/t' }],
+      pluginLog: () => {},
+    });
+    const st = svc.status();
+    ok((st.results ?? []).length === 0, '版本变了 → 旧结果被丢弃', JSON.stringify(st.results));
+    ok((st.pending ?? []).length === 0, '版本变了 → 不再待更新（不会弹旧提示）');
+  }
+
   // 6) 重启后读取"上次更新结果"
   {
     const dir = makeTarget('last-apply');

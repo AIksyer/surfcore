@@ -215,6 +215,27 @@ try {
     } finally { restore(); }
   }
 
+  // 用例 6.8：手动覆盖到 0.7.5，但旧清单/旧提交号还在 → 必须刷新证据，不能报"有更新"是旧提交
+  {
+    const dir = makeInstall('manual-upgrade', '0.7.5');
+    fs.mkdirSync(path.join(dir, 'release'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'release', 'install-manifest.json'), JSON.stringify({ version: '0.7.5', files: {} }));
+    fs.writeFileSync(path.join(dir, '.installed-manifest.json'), JSON.stringify({ version: '0.7.3', files: {} }));
+    fs.writeFileSync(path.join(dir, '.installed-meta.json'), JSON.stringify({ version: '0.7.3', sha: 'deadbeefdeadbeef' }));
+    const repo = `Mieksido/t68-${seq += 1}`;
+    const restore = stubFetch({ version: '0.7.6' });
+    try {
+      const r = await inspectVersionComponent({ versionRepo: repo, dir });
+      const manifest = JSON.parse(fs.readFileSync(path.join(dir, '.installed-manifest.json'), 'utf8'));
+      ok(manifest.version === '0.7.5', '覆盖安装后：安装清单刷新到当前版本', manifest.version);
+      const meta = JSON.parse(fs.readFileSync(path.join(dir, '.installed-meta.json'), 'utf8'));
+      ok(meta.version === '0.7.5' && !meta.sha, '覆盖安装后：安装记录刷新且不再带旧提交号', JSON.stringify(meta));
+      ok(r.status === 'update', '覆盖安装后：仍能正确识别远端更新', JSON.stringify(r));
+      ok(r.latestVersion === '0.7.6', '覆盖安装后：显示版本号 0.7.6', String(r.latestVersion));
+      ok(r.code !== 'new-commit', '覆盖安装后：不再按旧提交判定', String(r.code));
+    } finally { restore(); }
+  }
+
   // 用例 7：复刻事故现场——无 git、无 .installed-meta、本地 0.6.22、远端 0.7.0
   // 期望：inspectComponent 降级后按版本号判断 → status=update（不能是 latest）
   {
