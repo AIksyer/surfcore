@@ -1879,6 +1879,10 @@ export function apply(ctx) {
 
   // 原生「浏览目录 / 选择文件」——浏览器拿不到绝对路径，只能由宿主进程弹 Windows 对话框。
   // 仅 Windows 且 DSH 跑在本机时有意义；其它情况返回可读错误，前端提示手动填。
+  //
+  // 路径不能走 PowerShell stdout：Windows PowerShell 5.1 重定向时用 OEM/GBK 编码，
+  // Node 按 UTF-8 解码，中文目录会变成 `�`，后端 fsp.stat 直接 ENOENT（2026-10-29 反馈）。
+  // 改成：PowerShell 把选中路径写进临时 UTF-8 文件，Node 读文件后删除；彻底绕开控制台编码。
   async function handleBrowse(req, res, url) {
     const mode = url.searchParams.get('mode') === 'file' ? 'file' : 'dir';
     const title = url.searchParams.get('title') || (mode === 'file' ? '选择文件' : '选择目录');
@@ -1886,24 +1890,32 @@ export function apply(ctx) {
       json(res, 200, { ok: false, error: '只有 Windows 支持原生选择框，请手动填路径' });
       return;
     }
+    const psQuote = (s) => `'${String(s).replace(/'/g, "''")}'`;
+    const outFile = path.join(os.tmpdir(), `surfcore-browse-${process.pid}-${randomUUID()}.txt`);
+    const writeOut = (expr) => `[System.IO.File]::WriteAllText(${psQuote(outFile)}, ${expr}, (New-Object System.Text.UTF8Encoding -ArgumentList $false))`;
     const ps = mode === 'file'
       ? `Add-Type -AssemblyName System.Windows.Forms;
 $d = New-Object System.Windows.Forms.OpenFileDialog;
-$d.Title = ${JSON.stringify(title)};
+$d.Title = ${psQuote(title)};
 $d.Filter = '可执行文件 (*.exe)|*.exe|所有文件 (*.*)|*.*';
-if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.FileName }`
+if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$d.FileName')} }`
       : `Add-Type -AssemblyName System.Windows.Forms;
 $d = New-Object System.Windows.Forms.FolderBrowserDialog;
-$d.Description = ${JSON.stringify(title)};
+$d.Description = ${psQuote(title)};
 $d.ShowNewFolderButton = $true;
-if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.SelectedPath }`;
-    const child = execFile('powershell.exe', ['-STA', '-NoProfile', '-Command', ps], { windowsHide: true, timeout: 180_000 }, (error, stdout) => {
-      const picked = String(stdout || '').trim().split(String.fromCharCode(10)).pop().trim();
+if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$d.SelectedPath')} }`;
+    const child = execFile('powershell.exe', ['-STA', '-NoProfile', '-Command', ps], { windowsHide: true, timeout: 180_000 }, (error) => {
+      let picked = '';
+      try { picked = String(fs.readFileSync(outFile, 'utf8')).replace(/^\uFEFF/, '').trim(); } catch {}
+      try { fs.unlinkSync(outFile); } catch {}
       if (error && !picked) json(res, 200, { ok: false, error: `选择框打不开：${String(error.message || error).slice(0, 160)}` });
       else if (!picked) json(res, 200, { ok: false, cancelled: true, error: '已取消' });
       else json(res, 200, { ok: true, path: picked });
     });
-    child.on('error', () => json(res, 200, { ok: false, error: '无法启动 PowerShell（可能不在本机桌面）' }));
+    child.on('error', () => {
+      try { fs.unlinkSync(outFile); } catch {}
+      json(res, 200, { ok: false, error: '无法启动 PowerShell（可能不在本机桌面）' });
+    });
   }
 
   async function handlePet(req, res, url) {

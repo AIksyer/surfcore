@@ -4,6 +4,19 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.7.3] - 2026-10-29
+
+### 修复（原生「浏览…」选中文目录后路径乱码）
+
+- **现象**：设置页「导入离线包」选中文目录（如 `D:\...\中文oice-local`），弹窗报
+  `IMPORT_PATH_NOT_FOUND`，路径里出现 `�`/`◆`；实际目录存在。
+- **根因**：Windows PowerShell 5.1 重定向 stdout 用 GBK，Node 按 UTF-8 解码 → 中文路径损坏。
+- **修法**：PowerShell 把选中的路径写进 UTF-8 临时文件，Node 读文件后删除，不再解析 stdout；
+  导入 / 安装目录 / SnowLuma 三处「浏览…」共用 `handleBrowse`，一处修复全部生效。
+
+> 调查记录：[中文目录选择乱码](docs/cases/2026-10-29-browse-chinese-path.md)
+
+
 ## [0.7.2] - 2026-10-29
 
 ### 新增（可选 GitHub 令牌，解决“查不到：限流”）

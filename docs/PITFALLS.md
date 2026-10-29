@@ -2810,3 +2810,15 @@ npm run test:regressions
 **修法**：`renameWithRetry` 改为 120×500ms（约 60 秒），`removeWithRetry` 改为
 60×500ms；失败重试仍失败才报错并保留临时目录/备份路径。
 **验证**：小夹具通过；真实 7.9G 导入在 120×500ms 重试下成功（目标 7.6G，pyvenv 指向最终目录，源目录保留）。
+
+## #86（2026-10-29）原生「浏览…」选中文目录后路径变乱码，导入报不存在
+
+**现象**：用户选 `D:\...\中文目录\voice-local`，导入弹 `IMPORT_PATH_NOT_FOUND`，
+弹窗路径里是 `�` / `◆`；实际目录存在。
+
+**根因**：`handleBrowse` 从 PowerShell stdout 读路径。Windows PowerShell 5.1 重定向
+stdout 默认 OEM/GBK，Node 按 UTF-8 解码 → 中文路径损坏。
+
+**修法**：PowerShell 把选中路径写进 UTF-8 临时文件（`UTF8Encoding($false)`），
+Node 读文件后删除；不再解析 stdout。所有「浏览…」共用此函数。
+**验证**：`node --check` + 临时文件中文路径读写一致；真实选择框需重启 DSH 后手测。
