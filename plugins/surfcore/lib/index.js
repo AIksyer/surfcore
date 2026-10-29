@@ -2633,6 +2633,11 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output 
     const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
     if (action === 'check') { json(res, 200, await updates.check({ fetch: true })); return; }
     if (action === 'apply') { json(res, 200, await updates.apply(ids)); return; }
+    if (action === 'rollback') {
+      const target = String(body.id ?? ids[0] ?? '').trim();
+      json(res, 200, await updates.rollback(target));
+      return;
+    }
     if (action === 'dismiss') { json(res, 200, updates.dismiss(ids)); return; }
     if (action === 'reset') { json(res, 200, updates.resetDismissed()); return; }
     json(res, 400, { ok: false, error: '未知 action' });

@@ -73,13 +73,13 @@ async function waitExit(pid, timeoutMs = 15 * 60_000) {
 
 function copyZip(staging, target) {
   // robocopy 比 cpSync 可靠：能处理大量文件、失败会返回码。
-  // /MIR 会删掉"源里没有"的文件（修掉旧版残留混杂），但必须排除运行数据 &
-  // 用户配置，否则会把 state、config.json、node_modules 一起删掉。
+  // 2026-10-29：从 /MIR 改成 /E —— **只覆盖、不删除**。
+  // /MIR 会删掉"源里没有"的文件，连用户自建文件一起删；现在宁可留旧文件也不误删。
   const exDirs = ['state', 'backups', 'node_modules', '.git', 'logs', 'staging', 'pet', 'characters', 'voice-packs', 'tmp-update*'];
   const exFiles = ['config.json', 'bili.config.json', 'updates-pending.json'];
   const argv = [
     staging, target,
-    '/MIR',
+    '/E',
     '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/R:2', '/W:1',
     '/XD', ...exDirs,
     '/XF', ...exFiles,
@@ -126,6 +126,15 @@ try {
     process.exit(4);
   }
 
+  // 安装清单副本：下次更新用它判断"哪些文件是我们的 / 用户改过没有"
+  try {
+    const srcManifest = path.join(pending.staging, 'release', 'install-manifest.json');
+    if (fs.existsSync(srcManifest)) {
+      fs.writeFileSync(path.join(pending.target, '.installed-manifest.json'), fs.readFileSync(srcManifest));
+      log('[apply-update] 已写 .installed-manifest.json');
+    }
+  } catch (e) { log(`[apply-update] 写安装清单失败：${e.message}`); }
+
   // 写安装记录（供「检查更新」做提交级比对）
   if (pending.meta) {
     try {
@@ -135,7 +144,23 @@ try {
       log('[apply-update] 已写 .installed-meta.json');
     } catch (e) { log(`[apply-update] 写 meta 失败：${e.message}`); }
   }
-  log(`[apply-update] 完成：${pending.component} → v${pending.to ?? '?'}`);
+
+  // ── 更新后验证：目标目录版本必须等于 pending.to ──
+  let actualVersion = '';
+  try { actualVersion = String(JSON.parse(fs.readFileSync(path.join(pending.target, 'package.json'), 'utf8')).version ?? ''); } catch {}
+  const want = String(pending.to ?? '').trim();
+  const norm = (v) => String(v ?? '').trim().replace(/^v/i, '');
+  if (want && norm(actualVersion) !== norm(want)) {
+    const reason = `更新后版本不一致：期望 v${want}，实际 v${actualVersion || '（读不到）'}`;
+    log(`[apply-update] 验证失败：${reason}`);
+    try {
+      fs.writeFileSync(`${pendingFile}.failed`, JSON.stringify({
+        ...pending, error: reason, code: 'verify.version-mismatch', at: new Date().toISOString(),
+      }, null, 2));
+    } catch {}
+    process.exit(4);
+  }
+  log(`[apply-update] 完成并验证：${pending.component} → v${actualVersion}`);
   try { fs.rmSync(pending.staging, { recursive: true, force: true }); } catch {}
   try { fs.rmSync(pendingFile, { force: true }); } catch {}
   try { fs.rmSync(`${pendingFile}.started`, { force: true }); } catch {}
@@ -143,7 +168,11 @@ try {
     const doneDir = path.join(path.dirname(pendingFile), 'updates-applied');
     fs.mkdirSync(doneDir, { recursive: true });
     fs.writeFileSync(path.join(doneDir, `${Date.now()}-${pending.component}.json`),
-      JSON.stringify({ component: pending.component, to: pending.to, at: new Date().toISOString() }, null, 2));
+      JSON.stringify({
+        component: pending.component, from: pending.from ?? '', to: pending.to, version: actualVersion,
+        verified: true, txn: pending.txn ?? '', backup: pending.backup ?? '',
+        at: new Date().toISOString(),
+      }, null, 2));
   } catch {}
   process.exit(0);
 } catch (error) {

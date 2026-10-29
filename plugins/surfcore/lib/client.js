@@ -1217,6 +1217,12 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
     // ── 概览 ────────────────────────────────────────────────────────────────
     function UpdatesModal({ status, onClose, onDone, toast }) {
       const pending = Array.isArray(status?.pending) ? status.pending : [];
+      // 远端只拿到提交号时显示「提交 abc1234」而不是 "vabc1234"（否则用户以为是乱码）
+      const fmtV = (v) => {
+        const t = String(v ?? "").trim();
+        if (!t) return "?";
+        return /^[0-9a-f]{7,40}$/i.test(t) ? `提交 ${t.slice(0, 7)}` : `v${t}`;
+      };
       const [selected, setSelected] = useState(() => new Set(pending.map((item) => item.id)));
       const [never, setNever] = useState(false);
       const [working, setWorking] = useState(false);
@@ -1235,9 +1241,12 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
           const staged = (r.results ?? []).filter((x) => x.ok && x.staged);
           if (r.ok && staged.length) {
             // 延后应用：文件已下载到 staging，宿主退出后才覆盖（避免覆盖正在使用的模块导致崩溃）
-            toast(`✓ 已下载 ${staged.length} 个组件；退出并重新打开 DSH 后自动完成更新`);
+            toast(`⏳ 已下载 ${staged.length} 个组件，退出并重新打开 DSH 后应用（尚未更新）`);
           } else if (r.ok) toast(`✓ 已更新 ${r.updated} 个组件${r.restartRequired ? "，请重启对应服务" : ""}`);
-          else toast(`✗ ${failed[0]?.error ?? "更新失败"}`);
+          else {
+            const f = failed[0] ?? {};
+            toast(`✗ 更新失败${f.code ? `（${f.code}）` : ""}：${f.reason ?? f.error ?? "原因不明"}${f.hint ? `；建议：${f.hint}` : ""}`);
+          }
           onDone?.(r);
         } catch (e) { toast(`✗ 更新失败：${e.message}`); }
         finally { setWorking(false); }
@@ -1251,13 +1260,14 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
         finally { setWorking(false); onClose?.(); }
       };
       return h("div", { className: "qbw-modal-backdrop", onClick: (e) => { if (e.target === e.currentTarget && !working) onClose?.(); } },
-        h("div", { className: "qbw-modal", style: { maxWidth: "600px", maxHeight: "82vh", overflow: "auto" } },
-          h("h3", null, pending.length > 1 ? `发现 ${pending.length} 个可用更新` : "发现可用更新"),
+        h("div", { className: "qbw-modal", style: { maxWidth: "600px", maxHeight: "82vh", display: "flex", flexDirection: "column" } },
+          h("h3", { style: { flexShrink: 0 } }, pending.length > 1 ? `发现 ${pending.length} 个可用更新` : "发现可用更新"),
+          h("div", { style: { flex: "1 1 auto", minHeight: 0, overflow: "auto", paddingRight: "2px" } },
           h("p", null, (() => {
             // 让用户一眼看到"这次更新到什么版本"（以前只有提交列表，用户不知道是哪个版本）
             const withVer = pending.filter((x) => x.latestVersion);
             if (!withVer.length) return "git 安装做快进（--ff-only）；zip 安装会下载新包覆盖代码。两种都不会动 config.json 与记忆卡。";
-            const parts = withVer.map((x) => `${x.name} v${x.installedVersion || "?"} → v${x.latestVersion}`);
+            const parts = withVer.map((x) => `${x.name} v${x.installedVersion || "?"} → ${fmtV(x.latestVersion)}`);
             return `${parts.join("　")}；更新不会动 config.json 与记忆卡。`;
           })()),
           pending.length ? pending.map((item) => h("div", { key: item.id, style: { border: "1px solid rgba(127,127,127,.24)", borderRadius: "10px", padding: "10px 12px", margin: "0 0 8px" } },
@@ -1266,11 +1276,11 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
               item.name,
               h("span", { className: "qbw-chip", style: { marginLeft: "auto" } },
                 item.channel === "version"
-                  ? `v${item.installedVersion} → v${item.latestVersion}`
+                  ? `v${item.installedVersion} → ${fmtV(item.latestVersion)}`
                   : item.channel === "release"
-                    ? `${item.installedVersion ? `v${item.installedVersion}` : "未安装"} → v${item.latestVersion}`
+                    ? `${item.installedVersion ? `v${item.installedVersion}` : "未安装"} → ${fmtV(item.latestVersion)}`
                     : (item.latestVersion
-                      ? `v${item.installedVersion || "?"} → v${item.latestVersion}（${item.behind} 个提交）`
+                      ? `v${item.installedVersion || "?"} → ${fmtV(item.latestVersion)}（${item.behind} 个提交）`
                       : `${item.behind} 个提交（到 ${String(item.remote || "").slice(0, 7)}）`))),
             h("div", { className: "qbw-hint", style: { marginTop: "4px" } },
               `${item.dir} · ${item.branch ?? ""}${item.dirty ? ` · ⚠️ 本地有 ${item.dirty} 处改动` : ""}${item.ahead ? ` · ⚠️ 本地领先 ${item.ahead}` : ""} · ${item.channel === "release" ? "版本清单" : item.channel === "version" ? "提交追踪" : "git 仓库"}`),
@@ -1282,8 +1292,8 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
           h("label", { style: { display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" } },
             h("input", { type: "checkbox", checked: never, onChange: (e) => setNever(e.target.checked), disabled: working }),
             h("span", { className: "qbw-hint" }, "不再提示本次更新（只对这次的远端版本生效；有更新提交时会重新提醒）")),
-          working ? h(ProgressBar, { phase: "正在下载/应用更新…", indeterminate: true }) : null,
-          h("div", { className: "qbw-actions" },
+            working ? h(ProgressBar, { phase: "正在下载/应用更新…", indeterminate: true }) : null),
+          h("div", { className: "qbw-actions", style: { flexShrink: 0, paddingTop: "10px" } },
             h(Btn, { kind: "qbw-btn2", onClick: () => (never ? dismissThis() : onClose?.()), disabled: working },
               never ? "不再提示本次" : "稍后"),
             h(Btn, { onClick: applySelected, disabled: working || !selected.size },
@@ -1464,29 +1474,112 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
               return h(StatusDot, { ok: true }, "已是最新");
             })()),
             h("div", { className: "qbw-kv" }, h("span", null, "上次检查"), h("span", null, updates.lastCheckAt ? fmtTime(updates.lastCheckAt) : "还没查过")),
+            (() => {
+              // 上次更新的结果必须能看见（成功/失败/待重启/未验证），不能只靠 toast 一闪而过
+              const la = updates.lastApply;
+              if (!la) return null;
+              const color = la.status === "failed" ? "#c0392b" : (la.status === "applied_unverified" ? "#b9770e" : undefined);
+              const text = la.status === "failed"
+                ? `失败：${la.reason || "原因不明"}${la.hint ? `（${la.hint}）` : ""}`
+                : la.status === "pending_restart"
+                  ? "已排队，等待退出 DSH 后应用（尚未更新）"
+                  : la.status === "applied_unverified"
+                    ? `${la.reason || "已应用，尚未验证"}${la.hint ? `（${la.hint}）` : ""}`
+                    : `${la.reason || "结果未知"}${la.hint ? `（${la.hint}）` : ""}`;
+              return h("div", { className: "qbw-kv" }, h("span", null, "上次更新"), h("span", { style: { color } },
+                text,
+                la.status === "failed"
+                  ? h(Btn, {
+                    kind: "qbw-btn2", disabled: !!busy,
+                    onClick: async () => {
+                      setBusy("rollback");
+                      try {
+                        const r = await api("/updates", { method: "POST", body: { action: "rollback", id: la.component || "surfcore" } });
+                        if (r.ok) toast(`✓ ${r.message ?? "已回滚"}（请重启 DSH）`);
+                        else toast(`✗ 回滚失败：${r.reason ?? r.error ?? "原因不明"}${r.hint ? `；${r.hint}` : ""}`);
+                        await reload();
+                      } catch (e) { toast(`✗ 回滚失败：${e.message}`); } finally { setBusy(""); }
+                    },
+                  }, busy === "rollback" ? "回滚中…" : "回滚到更新前")
+                  : null));
+            })(),
             h("div", { className: "qbw-kv" }, h("span", null, "组件"), h("span", null,
               (updates.results ?? []).length
                 ? updates.results.map((item) => {
-                  if (item.available) {
-                    const ver = item.latestVersion
-                      ? (item.ahead
-                        ? ` 本地 v${item.installedVersion} 领先发布 v${item.latestVersion}`
-                        : ` v${item.installedVersion ?? "?"}→v${item.latestVersion}`)
-                        + (item.versionStale ? "（缓存）" : "")
-                      : "";
-                    return `${item.name}${item.updateAvailable ? `（有更新${ver}）` : `（最新${ver}）`}`;
-                  }
-                  return `${item.name}（${item.installedVersion ? `v${item.installedVersion} · ` : ""}不可查）`;
+                  // 三种结果必须说清（AGENTS 1.7）：有更新 / 已是最新 / 查不到（附原因）。
+                  // 不允许把"查不到/失败"显示成"最新"（2026-10-29 事故）。
+                  const ver = item.latestVersion
+                    ? (item.ahead
+                      ? ` 本地 v${item.installedVersion} 领先发布 v${item.latestVersion}`
+                      : ` v${item.installedVersion ?? "?"}→v${item.latestVersion}`)
+                      + (item.versionStale ? "（缓存）" : "")
+                    : "";
+                  const st = item.status ?? "";
+                  if (st === "update") return `${item.name}（有更新${ver}）`;
+                  if (st === "latest") return `${item.name}（已是最新${ver}）`;
+                  if (st === "blocked") return `${item.name}（更新被阻止：${item.blocked || item.reason || "原因不明"}）`;
+                  if (st === "failed") return `${item.name}（检查失败：${item.reason || "原因不明"}）`;
+                  if (st === "unknown") return `${item.name}（查不到：${item.reason || "原因不明"}）`;
+                  if (item.available) return `${item.name}${item.updateAvailable ? `（有更新${ver}）` : `（已是最新${ver}）`}`;
+                  return `${item.name}（查不到：${item.reason || "原因不明"}）`;
                 }).join(" · ")
                 : "还没检查")),
+            (() => {
+              // 查不到/失败：原因 + 建议，常驻显示（不能只留一句"不可查"）
+              const bad = (updates.results ?? []).filter((x) => x.status === "unknown" || x.status === "failed");
+              if (!bad.length) return null;
+              return h("div", { className: "qbw-hint", style: { color: "#c0392b", marginTop: "4px" } },
+                bad.map((x) => `${x.name}：${x.reason || "原因不明"}${x.hint ? `（${x.hint}）` : ""}`).join("；"));
+            })(),
             (updates.results ?? []).filter((item) => item.available && item.blocked && item.updateAvailable).length
               ? h("div", { className: "qbw-hint", style: { color: "#c0392b" } },
                 "有组件因本地改动/未推送提交被拒，详情点「查看详情」。")
               : null,
             h("div", { className: "qbw-actions" },
               h(Btn, { onClick: () => checkUpdates(), disabled: !!busy }, busy === "updates" ? "检查中…" : "检查更新"),
+              (updates.results ?? []).some((x) => x.status === "unknown" || x.status === "failed")
+                ? h(Btn, {
+                  kind: "qbw-btn2",
+                  onClick: async () => {
+                    const payload = {
+                      at: new Date().toISOString(),
+                      version: updates.results?.find((x) => x.id === "surfcore")?.installedVersion ?? "",
+                      results: (updates.results ?? []).map((x) => ({
+                        id: x.id, status: x.status, code: x.code, reason: x.reason, hint: x.hint,
+                        installedVersion: x.installedVersion, latestVersion: x.latestVersion, channel: x.channel,
+                      })),
+                    };
+                    try {
+                      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+                      toast("✓ 诊断信息已复制，可直接贴给开发者");
+                    } catch (e) {
+                      toast(`✗ 复制失败（${e.message}）：请截图更新卡片`);
+                    }
+                  },
+                }, "复制诊断")
+                : null,
               (updates.results ?? []).some((x) => x.updateAvailable && x.downloadUrl)
                 ? h(Btn, { kind: "qbw-btn2", onClick: () => window.open((updates.results ?? []).find((x) => x.updateAvailable && x.downloadUrl).downloadUrl, "_blank", "noopener") }, "去下载新版")
+                : null,
+              (updates.pending ?? []).length
+                ? h(Btn, {
+                  onClick: async () => {
+                    setBusy("apply-update");
+                    try {
+                      const ids = (updates.pending ?? []).map((x) => x.id);
+                      const r = await api("/updates", { method: "POST", body: { action: "apply", ids } });
+                      const staged = (r.results ?? []).filter((x) => x.ok && x.staged);
+                      const failed = (r.results ?? []).filter((x) => !x.ok);
+                      if (r.ok && staged.length) toast(`⏳ 已下载 ${staged.length} 个组件，退出并重新打开 DSH 后应用（尚未更新）`);
+                      else if (r.ok) toast(`✓ 已更新 ${r.updated} 个组件${r.restartRequired ? "，请重启对应服务" : ""}`);
+                      else {
+                        const f = failed[0] ?? {};
+                        toast(`✗ 更新失败${f.code ? `（${f.code}）` : ""}：${f.reason ?? f.error ?? "原因不明"}${f.hint ? `；建议：${f.hint}` : ""}`);
+                      }
+                      await reload();
+                    } catch (e) { toast(`✗ 更新失败：${e.message}`); } finally { setBusy(""); }
+                  },
+                }, busy === "apply-update" ? "更新中…" : `立即更新（${(updates.pending ?? []).length}）`)
                 : null,
               h(Btn, { kind: "qbw-btn2", onClick: () => setUpdateOpen(true), disabled: !(updates.results ?? []).length }, "查看详情"))),
           h(AdvancedSettings, { note: "SnowLuma 安装 / 扩展与平台：装好后很少改" },

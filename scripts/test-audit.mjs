@@ -160,6 +160,10 @@ const tests = [
   'test-question-answers.mjs',
   // 主人特权操作审计（2026-10-29）：1MB×5 轮转、跨文件读尾、写入失败可见、90 天清理。
   'test-owner-audit.mjs',
+  // 检查更新三态（2026-10-29 事故）：无 git / 无安装记录时按版本号判断；
+  // 取不到远端版本号必须是 unknown，不能显示"最新"。
+  'test-update-apply-result.mjs',
+  'test-update-version-fallback.mjs',
   // 版本号单一真相：根/插件 package.json 一致、无硬编码、CHANGELOG 有当前版本。
   'test-version.mjs',
   // B站分享去重：新鲜池空时不得回退旧素材（2026-10-26 修复的"同一条反复发"）。

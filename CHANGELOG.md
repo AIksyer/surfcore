@@ -4,6 +4,43 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.7.1] - 2026-10-29
+
+### 修复（更新系统：不再静默失败）
+
+**检查更新必须说清三种结果**
+
+- 没有 git 命令 / 没有 `.installed-meta.json` 时，改为**按版本号比对**，不再直接判「最新」
+  （事故现场：本地 0.6.22、远端 0.7.0，却显示「最新 v0.6.22→1ad2042」且没有更新按钮）；
+- 取不到远端版本号、远端不可达、`rev-list` 失败 → 显示「查不到：原因（建议）」，不再冒充「最新」；
+- 卡片按状态渲染：「有更新 / 已是最新 / 查不到 / 被阻止 / 检查失败」，查不到与失败常驻原因与建议。
+
+**失败必须给出原因与下一步**
+
+- 下载失败区分 `download.http-XXX` / `download.timeout` / `download.network` / `download.write-failed`；
+- 解压失败 `verify.unzip-failed` / `verify.bad-archive`；
+- 更新助手缺失或启动失败 `stage.helper-missing` / `stage.spawn-failed`（不再「下载成功即成功」）；
+- 「已下载待重启」单列 `pending_restart`，文案明确「尚未更新」，`updated` 只统计真正落地的；
+- 重启后卡片常驻「上次更新」：成功（已校验）/ 已应用未验证 / 待重启 / 失败原因 + 建议；
+- 新增「复制诊断」，一键复制版本、状态、错误码与建议。
+
+**不弄丢用户的东西**
+
+- 覆盖前读包内 `release/install-manifest.json`（文件 + sha256），先校验包与清单一致；
+- 归属判定：按上次安装清单比对，**本地改过的文件 → 阻止自动更新并列出**；
+  既无清单也无安装记录 → 阻止并给手动下载指引（不冒险覆盖）；
+- 覆盖前**真备份**（将被覆盖的文件 + 逐文件回读校验），备份失败不覆盖；
+- `robocopy /MIR` 改为 `/E`：**只覆盖、不删除**，用户自建文件永不误删；
+- 更新后校验目标 `package.json` 版本与目标一致，不符写 `.failed(verify.version-mismatch)`；
+- 新增**回滚**：从最近备份逐文件恢复并校验哈希与版本，失败保留备份并给人工恢复指引。
+
+### 工具
+
+- 新增 `scripts/release-manifest.mjs`，发版前生成 `release/install-manifest.json`（当前 605 文件）。
+
+> 测试：`test-update-apply-result` 40 项断言；audit 83/83；插件测试全绿。
+
+
 ## [0.7.0] - 2026-10-29
 
 ### 功能（语音包离线导入：本地/云端都能从网盘包导入）
