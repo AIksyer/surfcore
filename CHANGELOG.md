@@ -4,6 +4,28 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.7.8] - 2026-10-29
+
+### 修复（语音页保存显示「toast is not a function」，其实已保存）
+
+- **现象**：设置 → 语音 → 云端包，填完 AppID / Access Key / 音色 ID 点保存，红字
+  「保存失败: toast is not a function」，但 `config.toml` 已经写入。
+- **根因**：Settings 里 `toast` 是浮层文案**字符串**，真正的通知函数叫 `notify`；
+  `h(VoiceTab, { toast })` 把字符串当函数传 → 保存成功后调用它抛 TypeError →
+  被 `catch` 改写成「保存失败」。语音页 8 处提示全部因此失效。
+- **修法**：
+  - 接线改为 `toast: notify`；浮层状态改名 `toastText`，彻底消除同名遮蔽；
+  - 云端保存顺序改为「保存 → 刷新表单 → 通知」，通知失败不再改写保存结论；
+  - 契约测试新增：所有 Tab 的 `toast` 必须是函数、VoiceTab 必须收 `notify`、状态必须叫 `toastText`。
+
+### 文档
+
+- `docs/guides/ERROR-REPORTING.md` 新增「跨层契约」一节：同名不同物必须改名；
+  成功路径上的界面失败不得改写业务结论；跨进程数据必须显式投影并读回断言。
+
+> 测试：audit 84/84；插件测试全绿（含 test-client-contract 新断言）。
+
+
 ## [0.7.7] - 2026-10-29
 
 ### 修复（手动覆盖安装后仍提示旧版本更新）
