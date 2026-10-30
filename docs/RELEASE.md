@@ -18,6 +18,27 @@
 失败路径（用户看到什么、下一步点什么、有没有失败分支测试）/ 还有什么没验证
 ```
 
+## 一·五、防复发门禁（2026-10-30，每次发版必跑）
+
+发布链路出过三次同类事故：清单与发布物不同源 → 用户下载的包永远校验失败 →
+自动更新 100% 不可用、弹窗反复出现。以下三条是**硬门禁**：
+
+| # | 门禁 | 命令 | 通过标准 |
+| --- | --- | --- | --- |
+| 1 | 清单由 git blob 生成 | `node scripts/release-manifest.mjs` | 工作区干净；输出 `source=git HEAD` |
+| 2 | 清单与提交逐字节一致 | `node scripts/release-manifest.mjs --verify-ref HEAD` | `问题 0 个` |
+| 3 | 发布物与清单一致 | 下载 tag 归档 → `node scripts/release-manifest.mjs --verify <dir>` | `不符 0 / 缺失 0` |
+
+**发布脚本纪律**：`scripts/publish-via-api.mjs` 必须用 `git show HEAD:<path>` 取内容上传；
+禁止读工作区文件（Windows CRLF → 远端仓库 CRLF → 校验必失败）。
+
+**镜像同步纪律**：`sync_mirror.py` 从 git 对象写字节，不复制工作区文件；dotfiles（`.gitignore`）
+必须在白名单里。
+
+**失败排查口径**：用户报"点了更新版本不变"时，先看 `lastApplyFailure.code`：
+`verify.staging-mismatch` = 发布侧问题（别让用户重试，手动下载 + 修链路）；
+`evidence-insufficient` = 缺安装证据；`download.*` = 网络/镜像。
+
 ## 二、发布前检查（发布会话逐条做，不许凭记忆）
 
 ```bash
@@ -25,13 +46,20 @@ cd D:\deepseekwork\surfcore
 git status --porcelain          # 必须干净，或有明确列出的待发文件
 git log --oneline -5            # 确认最近提交都是要发的
 node -e "console.log(require('./package.json').version)"   # 当前版本
-npm run test:audit              # 必须全绿（当前 83/83；新增/删除测试后同步这个数）
+npm run test:audit              # 必须全绿（当前 88/88；新增/删除测试后同步这个数）
 cd plugins/surfcore && npm test # 必须 0 失败
 ```
 
 然后向用户确认：**版本号 + 发布范围（哪些仓库）**。
 
 ## 三、发布步骤
+
+0. **先提交、再生成清单**（2026-10-30 事故）：
+   ```bash
+   git status --porcelain        # 必须干净
+   node scripts/release-manifest.mjs   # 只列 git 跟踪文件；工作区脏时脚本会报错退出
+   ```
+   清单必须与 GitHub 归档内容一致，否则客户端校验会失败、自动更新全部不可用。
 
 1. **bump**（用户给定版本号时，检查是否与 `version.mjs` 建议一致）：
    ```bash

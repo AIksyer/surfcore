@@ -43,7 +43,7 @@ try {
   console.log('noMeta:', JSON.stringify({ available: noMeta.available, status: noMeta.status, reason: noMeta.reason }));
   assert.equal(noMeta.available, true, '没有 meta 也应可查');
   assert.ok(!String(noMeta.reason).includes('package.json'), '不应再报读不到 package.json');
-  assert.ok(['update', 'latest', 'unknown'].includes(noMeta.status), `状态应是三态之一：${noMeta.status}`);
+  assert.ok(['update', 'latest', 'unknown', 'blocked'].includes(noMeta.status), `状态应是三态之一（0.7.5 起含 blocked）：${noMeta.status}`);
 
   // 3) 目录里什么都没有 → 明确"还没装"
   const empty = path.join(tmp, 'empty');

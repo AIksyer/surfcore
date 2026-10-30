@@ -13,6 +13,8 @@ fs.mkdirSync(stateDir, { recursive: true });
 const pkgDir = path.join(dir, 'pkg');
 fs.mkdirSync(pkgDir, { recursive: true });
 fs.writeFileSync(path.join(pkgDir, 'package.json'), JSON.stringify({ version: '0.4.6' }));
+// 0.7.5 起无安装证据的目录会 blocked，不进 pending；这个用例要测“有证据的新版”。
+fs.writeFileSync(path.join(pkgDir, '.installed-meta.json'), JSON.stringify({ version: '0.4.6' }));
 
 const realFetch = global.fetch;
 global.fetch = async (url) => {

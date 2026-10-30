@@ -166,11 +166,19 @@ const tests = [
   // 检查更新三态（2026-10-29 事故）：无 git / 无安装记录时按版本号判断；
   // 取不到远端版本号必须是 unknown，不能显示"最新"。
   // 语音三闸门 + 配置双写（2026-10-29 复盘）：工具常注册、拒绝带 code/hint、保存带戳防覆盖。
+  // 安装清单只能含 git 跟踪文件（2026-10-30：脏清单导致 zip 更新 100% 失败）。
+  // 语音失败分类/换路/自检接线（2026-10-30 P0+P1）。
+  'test-voice-diagnostics.mjs',
+  'test-release-manifest.mjs',
   'test-voice-gates.mjs',
   'test-update-apply-result.mjs',
   'test-update-version-fallback.mjs',
   // 版本号单一真相：根/插件 package.json 一致、无硬编码、CHANGELOG 有当前版本。
   'test-version.mjs',
+  // 插件冲突体检：已知第三方工具是否被 QQ 策略拒绝、压缩接管冲突、未知插件必须标 unknown。
+  'test-plugin-compat.mjs',
+  // 闸门事件中心 + 单轮止血：L0-L3 分级、去重/确认、步数/重复错误/预算熔断。
+  'test-gate-events.mjs',
   // B站分享去重：新鲜池空时不得回退旧素材（2026-10-26 修复的"同一条反复发"）。
   'test-bili-share-dedup.mjs',
 ];

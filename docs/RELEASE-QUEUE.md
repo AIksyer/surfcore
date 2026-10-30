@@ -11,6 +11,58 @@
 
 ## 待发布
 
+### 批次 2026-10-30 17:20 · 闸门事件中心 + 单轮 L3 止血
+<!-- release-batch: start=2026-10-30T17:20+08:00 end=2026-10-30T17:35+08:00 commits=3a82618 -->
+
+**覆盖提交**：`3a82618`
+**建议**：patch → **0.7.19** 或发布会话当前版本 +1
+
+**新增**：
+- `src/gate-events.js`：L0–L3 分级、脱敏、ack、2MB 轮转；
+- `src/turn-guard.js` + bridge `guardTurnEvent`：单轮工具步数 40、同一 tool+error 3 次、
+  回合内每日额度耗尽 → **cancel-only** 停止 + 直接 QQ 通知；
+- `src/dsh-client.cancelTurn()`（不清 inbox）；
+- 设置 → 概览「安全提醒」卡片，L2/L3 弹窗；插件 `/gate-events`；
+- 兼容性体检 blocker/high 自动进事件中心。
+
+**未做**：单轮费用上限（价格表覆盖不全）、pre-call 阻断、L0/L1 全量生产者接入、
+端口/进程归属；报告/文档已标“未检查”。
+
+**case**：[docs/cases/2026-10-30-gate-events-turn-guard.md](cases/2026-10-30-gate-events-turn-guard.md)
+**验证**：`node scripts/test-gate-events.mjs`；`npm run test:audit` 88/88；
+`plugins/surfcore npm test`；`node scripts/test-audit-bridge.mjs`。
+**交接**：同步 `src/gate-events.js`、`src/turn-guard.js`、`src/bridge.js`、`src/dsh-client.js`、
+`plugins/surfcore/lib/{index,client}.js`、`scripts/test-gate-events.mjs`、manifest、docs；
+重启 DSH 后生效。真实 L2/L3 弹窗与 cancel 时延需手测。
+
+---
+
+### 批次 2026-10-30 16:10 · 插件冲突体检（只读）
+<!-- release-batch: start=2026-10-30T16:10+08:00 end=2026-10-30T16:20+08:00 commits=6023a38,36da77c -->
+
+**覆盖提交**：`6023a38`（功能）、`36da77c`（安装清单/接线断言，到本批 HEAD）
+**建议**：patch → **0.7.19**（或发布会话当前版本号 +1）
+
+**新增**：设置 → 概览「检查更新」旁「插件体检」。
+只读扫描 profile bundles / `cordis.patch.yml` / 已安装包 / 已知第三方插件 / QQ 工具策略。
+
+**能查**：
+- 第三方工具是否会被 QQ guard 拒绝（如 `billion-context` 的 5 个上下文工具）；
+- 第三方上下文插件是否接管压缩且 `compaction-basic auto=false`；
+- 插件未声明工具清单 → `unknown`，报告显示覆盖范围/未检查项；
+- 版本/已知规则/`surfcore.compat.json` 声明。
+
+**不能查**：任意第三方工具枚举、最终 prompt、任意自定义状态路径、端口/进程归属、
+运行时工具拒绝/重复回复/回合熔断（报告“未检查”）。
+
+**case**：[docs/cases/2026-10-30-plugin-compat-check.md](cases/2026-10-30-plugin-compat-check.md)
+**验证**：`node scripts/test-plugin-compat.mjs`；`npm run test:audit` 87/87；
+`plugins/surfcore npm test` 全绿；真实 desktop profile 扫描只报 `dsh-whale-widget` 的 unknown info。
+**交接**：同步 `plugins/surfcore/lib/compat*.js`、`qq-tool-restrict.mjs` 导出、`client.js`、`index.js`、
+`scripts/test-plugin-compat.mjs`、`release/install-manifest.json`、docs。重启 DSH 后按钮生效。
+
+---
+
 ### 批次 2026-10-29 23:30 · 管理员称呼投影修复（v0.7.3 后热修）
 <!-- release-batch: start=2026-10-29T23:30+08:00 end=2026-10-29T23:40+08:00 commits=00cc8b2 -->
 

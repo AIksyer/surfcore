@@ -171,7 +171,19 @@ const SAFE_PREFIXES = [
 const SAFE_EXACT = new Set([
   'ask_user_question',
   'todo_write',
+  // 第三方上下文压缩（billion-context 注入的全局工具）：只操作上下文，不含本地执行/网络写操作。
+  // 2026-10-30 用户要求放行：不放行时模型会反复重试被拒工具（实测一个回合 197 次），
+  // 且 QQ 会话本身没有这两套压缩就更容易爆上下文。
+  'compress',
+  'decompress',
+  'search_context',
+  'acp_status',
+  'acp_cache',
 ])
+
+// 给「插件兼容性体检」读取的只读快照：不要在别处再抄一份白名单。
+export const SAFE_EXACT_TOOLS = Object.freeze([...SAFE_EXACT])
+export const SAFE_TOOL_PREFIXES = Object.freeze([...SAFE_PREFIXES])
 
 export function apply(ctx) {
   // 1) 把已知危险全局工具从 schema 隐藏（restrict 只影响继承的全局层，

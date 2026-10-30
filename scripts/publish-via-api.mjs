@@ -22,10 +22,12 @@ if (!token) { console.error('缺少 GH_TOKEN'); process.exit(2); }
 const tags = [];
 let message = '';
 let since = '';
+let all = false;
 for (let i = 0; i < rest.length; i += 1) {
   if (rest[i] === '--tag') tags.push(rest[++i]);
   else if (rest[i] === '--message') message = rest[++i];
   else if (rest[i] === '--since') since = rest[++i];
+  else if (rest[i] === '--all') all = true;
 }
 
 const dir = path.resolve(dirArg);
@@ -65,7 +67,7 @@ if (remoteTree === localTree) {
   // 用 --since 指定的本地祖先做 diff —— 多上传几个没变的文件没关系，base_tree 仍用远端的。
   let diffBase = remoteTree;
   const hasRemoteTree = (() => { try { git('cat-file', '-t', remoteTree); return true; } catch { return false; } })();
-  if (!hasRemoteTree) {
+  if (!all && !hasRemoteTree) {
     if (!since) {
       console.error(`本地没有远端树对象 ${remoteTree.slice(0, 7)}；请加 --since <本地已有的远端祖先提交>。`);
       process.exit(3);
@@ -74,11 +76,13 @@ if (remoteTree === localTree) {
     console.log(`用 --since ${since.slice(0, 7)} 做 diff（远端树对象本地没有）`);
   }
   // core.quotePath=false：否则 git 会把中文路径转义成 "dist/å..."，读文件时找不到
-  const changed = git('-c', 'core.quotePath=false', 'diff', '--name-status', diffBase, 'HEAD')
-    .split('\n').filter(Boolean)
-    .map((line) => { const [status, ...paths] = line.split('\t'); return { status, paths }; });
+  const changed = all
+    ? git('-c', 'core.quotePath=false', 'ls-files').split(String.fromCharCode(10)).filter(Boolean).map((rel) => ({ status: 'M', paths: [rel] }))
+    : git('-c', 'core.quotePath=false', 'diff', '--name-status', diffBase, 'HEAD')
+      .split(String.fromCharCode(10)).filter(Boolean)
+      .map((line) => { const [status, ...paths] = line.split('	'); return { status, paths }; });
   console.log(`差异文件：${changed.length}`);
-  if (changed.length > 400) { console.error('差异过大（>400），停下来人工确认'); process.exit(4); }
+  if (!all && changed.length > 400) { console.error('差异过大（>400），停下来人工确认'); process.exit(4); }
 
   const entries = [];
   for (const item of changed) {
@@ -89,7 +93,14 @@ if (remoteTree === localTree) {
     }
     const to = item.paths[item.paths.length - 1];
     const abs = path.join(dir, to);
-    const buf = fs.readFileSync(abs);
+    // 从 **git 对象**取内容，而不是工作区文件：Windows 工作区是 CRLF，git 提交/GitHub 归档是 LF；
+    // 直接发工作区字节会让远端仓库存成 CRLF → 客户端按清单校验（LF 哈希）必然失败（2026-10-30）。
+    let buf;
+    try {
+      buf = execFileSync('git', ['show', `HEAD:${to}`], { cwd: dir, maxBuffer: 256 * 1024 * 1024 });
+    } catch {
+      buf = fs.readFileSync(abs); // 未跟踪的新文件（正常流程里不存在）
+    }
     const blob = await api('POST', `/repos/${repoArg}/git/blobs`, { content: buf.toString('base64'), encoding: 'base64' });
     const mode = (fs.statSync(abs).mode & 0o111) ? '100755' : '100644';
     entries.push({ path: to, mode, type: 'blob', sha: blob.sha });

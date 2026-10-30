@@ -39,8 +39,9 @@ window.__ModuleLoader__.load({
       err ? h("div", { className: "qbw-err", style: { marginTop: "6px" } }, err) : null);
   }
 
-  async function browseNative(mode = "dir", title = "") {
-    const q = `mode=${mode === "file" ? "file" : "dir"}&title=${encodeURIComponent(title)}`;
+  async function browseNative(mode = "dir", title = "", filter = "") {
+    // filter 只接受宿主认识的枚举（如 snowluma），不把原始 filter 串传给宿主。
+    const q = `mode=${mode === "file" ? "file" : "dir"}&title=${encodeURIComponent(title)}${filter ? `&filter=${encodeURIComponent(filter)}` : ""}`;
     const res = await fetch(`${API}/browse?${q}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(180000) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
@@ -485,6 +486,8 @@ window.__ModuleLoader__.load({
 
     function AdminCard({ admin, onChange, qqPrivate = [], qqAllowAll = false, toast }) {
       const [auditOpen, setAuditOpen] = useState(false);
+      const [uidCheck, setUidCheck] = useState(null); // {ok, match, actualName, error, hint}
+      const [uidChecking, setUidChecking] = useState(false);
       const value = admin && typeof admin === "object" ? admin : {};
       const set = (key, next) => onChange({ ...value, [key]: next });
       const configured = Boolean(value.qq || value.biliMid || value.biliName);
@@ -494,6 +497,25 @@ window.__ModuleLoader__.load({
       const badge = aligned ? "ok" : configured ? "warn" : "bad";
       const badgeText = aligned ? "同一个人 ✓" : configured ? "只填了一边" : "未设置";
       const digits = (next) => String(next ?? "").replace(/[^\d]/g, "");
+      // 核查 UID 与昵称是否同一个人：查 B站 公开名片，把真实昵称带回来比对。
+      const checkUid = async () => {
+        const mid = String(value.biliMid ?? "").trim();
+        if (!/^\d{4,20}$/.test(mid)) {
+          setUidCheck({ ok: false, error: "B站 UID 必须是 4~20 位数字", hint: "个人空间地址 space.bilibili.com/<数字> 里的那串数字" });
+          return;
+        }
+        setUidChecking(true); setUidCheck(null);
+        try {
+          const r = await api("/bili/verify-user", { method: "POST", body: { mid, name: String(value.biliName ?? "").trim() } });
+          setUidCheck(r);
+          if (r.ok && r.match) toast(`✓ UID 与昵称一致：${r.actualName}（${r.mid}）`);
+          else if (r.ok && !r.match) toast(`✗ 昵称对不上：B站 是「${r.actualName}」`);
+          else toast(`✗ ${r.error || "核查失败"}`);
+        } catch (e) {
+          setUidCheck({ ok: false, error: e.message, hint: "检查网络能否访问 api.bilibili.com；稍后重试" });
+          toast(`✗ 核查失败：${e.message}`);
+        } finally { setUidChecking(false); }
+      };
       return h("div", { className: "qbw-admin" },
         h("div", { className: "qbw-admin-head" },
           h("div", null,
@@ -519,7 +541,24 @@ window.__ModuleLoader__.load({
               value: value.biliMid ?? "",
               onChange: (e) => set("biliMid", digits(e.target.value)),
             }),
-            h("small", null, "B站 评论区 / 私信 / 直播间认主用这个 mid")),
+            h("small", null, "B站 评论区 / 私信 / 直播间认主用这个 mid（4~20 位数字）"),
+            h("div", { style: { display: "flex", gap: "8px", alignItems: "center", marginTop: "6px", flexWrap: "wrap" } },
+              h(Btn, { kind: "qbw-btn2", onClick: checkUid, disabled: uidChecking || !String(value.biliMid ?? "").trim() },
+                uidChecking ? "核查中…" : "核查 UID 与昵称"),
+              uidCheck
+                ? h("span", { className: "qbw-hint", style: { color: uidCheck.ok ? (uidCheck.match ? "#67c23a" : "#e6a23c") : "#c0392b" } },
+                  uidCheck.ok
+                    ? (uidCheck.match
+                      ? `✓ 同一个人：${uidCheck.actualName}（${uidCheck.mid}）`
+                      : `⚠ B站 上的昵称是「${uidCheck.actualName}」`)
+                    : `✗ ${uidCheck.error || "核查失败"}`)
+                : null),
+            uidCheck && uidCheck.ok && !uidCheck.match
+              ? h(Btn, { kind: "qbw-btn2", onClick: () => { set("biliName", uidCheck.actualName || ""); setUidCheck({ ...uidCheck, match: true, inputName: uidCheck.actualName }); } }, "用 B站 昵称填上")
+              : null,
+            uidCheck && !uidCheck.ok && uidCheck.hint
+              ? h("small", null, `建议：${uidCheck.hint}`)
+              : null),
           h("label", { className: "qbw-admin-field" },
             h("span", null, "怎么称呼 TA"),
             h("input", {
@@ -1270,6 +1309,8 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
             const parts = withVer.map((x) => `${x.name} v${x.installedVersion || "?"} → ${fmtV(x.latestVersion)}`);
             return `${parts.join("　")}；更新不会动 config.json 与记忆卡。`;
           })()),
+          h("p", { style: { fontSize: "12px", color: "#e6a23c", marginTop: "2px" } },
+            "⚠️ 下载/更新完成后需要完全退出 DSH 再打开才会生效；只刷新设置页不会应用。"),
           pending.length ? pending.map((item) => h("div", { key: item.id, style: { border: "1px solid rgba(127,127,127,.24)", borderRadius: "10px", padding: "10px 12px", margin: "0 0 8px" } },
             h("label", { style: { display: "flex", gap: "8px", alignItems: "center", fontWeight: 600 } },
               h("input", { type: "checkbox", checked: selected.has(item.id), onChange: () => toggle(item.id), disabled: working }),
@@ -1292,12 +1333,113 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
           h("label", { style: { display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" } },
             h("input", { type: "checkbox", checked: never, onChange: (e) => setNever(e.target.checked), disabled: working }),
             h("span", { className: "qbw-hint" }, "不再提示本次更新（只对这次的远端版本生效；有更新提交时会重新提醒）")),
-            working ? h(ProgressBar, { phase: "正在下载/应用更新…", indeterminate: true }) : null),
+            (() => {
+            const la = status?.lastApply;
+            if (!la || la.status !== "failed") return null;
+            return h("div", {
+              className: "qbw-err",
+              style: { marginTop: "6px", padding: "8px 10px", borderRadius: "8px", background: "rgba(192,57,43,.12)" },
+            },
+            h("div", { style: { fontWeight: 600 } }, `更新被阻止（${la.code || "failed"}）`),
+            (la.mismatchCount || la.missingCount)
+              ? h("div", { className: "qbw-hint", style: { marginTop: "2px" } },
+                `清单不符 ${la.mismatchCount ?? 0} 个 / 缺失 ${la.missingCount ?? 0} 个`)
+              : null,
+            h("div", { className: "qbw-hint", style: { marginTop: "2px" } }, la.reason || "原因不明"),
+            la.hint ? h("div", { className: "qbw-hint", style: { marginTop: "2px" } }, `建议：${la.hint}`) : null,
+            h("div", { style: { display: "flex", gap: "8px", marginTop: "6px", flexWrap: "wrap" } },
+              h(Btn, { kind: "qbw-btn2", onClick: async () => {
+                try {
+                  await navigator.clipboard.writeText(JSON.stringify({ at: la.at, code: la.code, reason: la.reason, hint: la.hint, version: la.version ?? "" }, null, 2));
+                  toast("✓ 诊断信息已复制");
+                } catch (e) { toast(`✗ 复制失败：${e.message}`); }
+              } }, "复制诊断"),
+              h(Btn, { kind: "qbw-btn2", onClick: () => window.open("https://github.com/Mieksido/surfcore/releases/latest", "_blank", "noopener") }, "去下载新版")));
+          })(),
+          working ? h(ProgressBar, { phase: "正在下载/应用更新…", indeterminate: true }) : null),
           h("div", { className: "qbw-actions", style: { flexShrink: 0, paddingTop: "10px" } },
             h(Btn, { kind: "qbw-btn2", onClick: () => (never ? dismissThis() : onClose?.()), disabled: working },
               never ? "不再提示本次" : "稍后"),
-            h(Btn, { onClick: applySelected, disabled: working || !selected.size },
-              working ? "更新中…" : `立即更新（${selected.size}）`))));
+            h(Btn, {
+              onClick: applySelected,
+              disabled: working || !selected.size || status?.lastApply?.deterministic === true,
+            },
+              status?.lastApply?.deterministic === true
+                ? "此版本无法自动更新（请手动下载）"
+                : (working ? "更新中…" : `立即更新（${selected.size}）`)))));
+    }
+
+    // 插件冲突体检报告：只读结果；明确写出“未覆盖项”，避免把“没查到”当“兼容”。
+    function CompatModal({ report, error, onClose, onRetry, busy, toast }) {
+      const issues = Array.isArray(report?.issues) ? report.issues : [];
+      const sevLabel = { blocker: "阻断", high: "高风险", warn: "警告", info: "信息" };
+      const confLabel = { confirmed: "已确认", inferred: "按已知规则推断", unknown: "未覆盖/未知" };
+      const copy = async () => {
+        try {
+          await navigator.clipboard.writeText(JSON.stringify(report ?? error, null, 2));
+          toast?.("✓ 报告已复制");
+        } catch (e) {
+          toast?.(`✗ 复制失败：${e.message}；请截图报告`);
+        }
+      };
+      const issueRows = issues.map((it, i) => h("div", {
+        key: `${it.code}-${i}`,
+        style: { border: "1px solid rgba(127,127,127,.25)", borderRadius: "8px", padding: "9px 10px", marginTop: "8px" },
+      },
+        h("div", { style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" } },
+          h("b", null, it.title || it.code),
+          h("span", { className: "qbw-badge " + (it.severity === "blocker" || it.severity === "high" ? "bad" : "warn") },
+            `${sevLabel[it.severity] ?? it.severity} · ${confLabel[it.confidence] ?? it.confidence}`),
+          h("span", { className: "qbw-hint" }, it.code)),
+        h("div", { className: "qbw-hint", style: { marginTop: "3px" } }, `影响：${it.impact || "未说明"}`),
+        h("div", { className: "qbw-hint", style: { marginTop: "2px" } }, `建议：${it.recommendation || "未说明"}`),
+        it.evidence ? h("details", { style: { marginTop: "4px" } },
+          h("summary", { className: "qbw-hint" }, "证据"),
+          h("pre", { className: "qbw-out", style: { maxHeight: "150px", overflow: "auto", marginTop: "3px", whiteSpace: "pre-wrap", wordBreak: "break-all" } },
+            JSON.stringify(it.evidence, null, 2))) : null));
+      const unknown = report?.coverage?.unknownBundles ?? [];
+      return h("div", { className: "qbw-modal-backdrop", onClick: (e) => { if (e.target === e.currentTarget && !busy) onClose?.(); } },
+        h("div", { className: "qbw-modal", style: { width: "min(720px, 94vw)", maxHeight: "86vh", overflow: "auto" } },
+          h("h3", null, error ? "插件体检失败" : "插件冲突体检"),
+          error ? h("div", null,
+            h("div", { className: "qbw-err" }, `${error.code ? `（${error.code}）` : ""}${error.message}`),
+            h("div", { className: "qbw-hint", style: { marginTop: "6px" } }, error.hint || "确认 DSH 已安装、profile 可读后重试。"))
+            : h("div", null,
+              h("div", { className: "qbw-hint" },
+                report?.ok
+                  ? "未发现已知冲突。注意：这不等于“兼容”，未覆盖项见下。"
+                  : "发现需要处理的风险；报告只读，不会自动改配置。"),
+              h("div", { className: "qbw-hint", style: { marginTop: "4px" } },
+                `profile：${report?.profile?.name ?? "未知"} · SurfCore ${report?.versions?.surfcore ?? "?"} · DSH ${report?.versions?.dsh ?? "未知"} · ${report?.scannedAt ?? ""}`),
+              h("div", { className: "qbw-hint", style: { marginTop: "4px" } },
+                `已看：${report?.coverage?.packages ?? 0} 个包 / ${report?.coverage?.bundles?.length ?? 0} 个 bundle；已知工具 ${report?.coverage?.toolsKnown?.length ?? 0} 个`),
+              unknown.length ? h("div", { className: "qbw-hint", style: { color: "#b9770e", marginTop: "4px" } },
+                `未枚举工具的插件 ${unknown.length} 个：${unknown.map((x) => x.name).join("、")}`) : null,
+              (report?.coverage?.unchecked ?? []).length
+                ? h("div", { className: "qbw-hint", style: { marginTop: "2px" } }, `未检查：${report.coverage.unchecked.join("、")}`)
+                : null,
+              h("div", { style: { marginTop: "8px" } }, issues.length ? issueRows : h("div", { className: "qbw-hint" }, "没有已知问题。"))),
+          h("div", { className: "qbw-actions", style: { marginTop: "12px" } },
+            h(Btn, { kind: "qbw-btn2", onClick: copy, disabled: !report && !error }, "复制报告"),
+            h(Btn, { kind: "qbw-btn2", onClick: onRetry, disabled: !!busy }, busy === "compat" ? "体检中…" : "重新体检"),
+            h(Btn, { onClick: onClose, disabled: !!busy }, "关闭"))));
+    }
+
+    // 闸门 L2/L3 弹窗：必须说明“哪个门、挡了什么、影响、下一步”，不能只弹“已拒绝”。
+    function GateAlertModal({ event, onClose, onAck }) {
+      if (!event) return null;
+      const urgent = event.level === "L3";
+      return h("div", { className: "qbw-modal-backdrop", onClick: (e) => { if (e.target === e.currentTarget) onClose?.(); } },
+        h("div", { className: "qbw-modal", style: { width: "min(620px, 94vw)", maxHeight: "86vh", overflow: "auto" } },
+          h("h3", null, urgent ? "安全/成本警报（L3）" : "需要处理的安全提醒（L2）"),
+          h("div", { className: "qbw-hint" }, `${event.level} · ${event.gate} · ${event.event}`),
+          h("p", { style: { marginTop: "8px" } }, event.impact || event.reason?.message || "闸门触发了拦截。"),
+          event.reason?.message ? h("div", { className: "qbw-hint" }, `原因：${event.reason.message}`) : null,
+          event.recommendation ? h("div", { className: "qbw-hint", style: { marginTop: "4px" } }, `建议：${event.recommendation}`) : null,
+          h("div", { className: "qbw-hint", style: { marginTop: "4px" } }, "这条记录会保留；确认后不再自动弹同一事件。"),
+          h("div", { className: "qbw-actions", style: { marginTop: "12px" } },
+            h(Btn, { onClick: () => onAck?.(event.id) }, urgent ? "确认并关闭" : "确认"),
+            h(Btn, { kind: "qbw-btn2", onClick: onClose }, "稍后"))));
     }
 
     // 通用错误报告弹窗（AGENTS 1.7）：失败必须可见 + 给下一步。
@@ -1335,6 +1477,13 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
       // 检查在插件里做（git fetch，只读）；界面只负责展示与确认。
       const updates = overview?.updates ?? {};
       const [updateOpen, setUpdateOpen] = useState(false);
+      const [compat, setCompat] = useState(null);
+      const [compatError, setCompatError] = useState(null);
+      const [gateData, setGateData] = useState(null);
+      const [gateAlert, setGateAlert] = useState(null);
+      const dismissedGates = useRef(new Set());
+      // 更新后必须重启 DSH：检查到更新、以及下载完成后都主动提示（只刷新页面不会应用）
+      const [restartHint, setRestartHint] = useState(null);
       const [tokenDraft, setTokenDraft] = useState("");
       // ── 时区（覆盖系统时区；很多服务器的系统时区是错的）──────────────────
       const tz = overview?.timezone ?? null;
@@ -1365,6 +1514,8 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
         } finally { setBusy(""); }
       };
       const [snowError, setSnowError] = useState(null);
+      // 手动导入 SnowLuma：先说明"导入的是什么"，再开选择框
+      const [snowImport, setSnowImport] = useState(false);
       const [autoPrompted, setAutoPrompted] = useState(false);
       useEffect(() => {
         if (!autoPrompted && updates?.showPrompt) {
@@ -1377,7 +1528,8 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
         try {
           const r = await api("/updates", { method: "POST", body: { action: "check" } });
           const n = r.pendingCount ?? 0;
-          toast(n ? `发现 ${n} 个组件有更新` : "已是最新");
+          toast(n ? `发现 ${n} 个组件有更新（安装后需重启 DSH）` : "已是最新");
+          if (n) setRestartHint({ staged: false, count: n });
           if (n && openOnHit) setUpdateOpen(true);
           await reload();
           return r;
@@ -1385,6 +1537,43 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
           toast(`✗ 检查更新失败：${e.message}`);
           return null;
         } finally { setBusy(""); }
+      };
+      // 插件冲突体检：只读扫描；结果必须带“未覆盖项”，不能把“没查到”说成“兼容”。
+      const runCompat = async () => {
+        setBusy("compat");
+        try {
+          const r = await api("/compat/scan");
+          setCompat(r);
+          setCompatError(null);
+        } catch (e) {
+          setCompat(null);
+          setCompatError({
+            message: String(e.message || e),
+            code: e.code || "",
+            hint: e.hint || "确认 DSH 已安装、DSH_HOME/profiles 可读；必要时重启 DSH 后重试。",
+          });
+        } finally { setBusy(""); }
+      };
+      // 闸门事件：L2/L3 才弹；L0/L1 只留在通知列表，不打断。
+      const loadGateEvents = useCallback(async () => {
+        try {
+          const r = await api("/gate-events?limit=30&includeAcked=0");
+          setGateData(r);
+          const top = (r.events ?? []).find((x) => (x.level === "L3" || x.level === "L2") && !dismissedGates.current.has(x.id));
+          if (top) setGateAlert(top);
+        } catch {}
+      }, []);
+      useEffect(() => {
+        loadGateEvents();
+        const timer = setInterval(loadGateEvents, 15000);
+        return () => clearInterval(timer);
+      }, [loadGateEvents]);
+      const ackGate = async (id) => {
+        try {
+          await api("/gate-events", { method: "POST", body: id ? { ids: [id] } : { all: true } });
+          setGateAlert(null);
+          await loadGateEvents();
+        } catch (e) { toast(`✗ 确认失败：${e.message}`); }
       };
       // pickedPath 为空 = 在常见位置里猜；点了「浏览…」就把用户选的路径传进去验证并保存。
       const detectSnowLuma = async (pickedPath = "") => {
@@ -1413,6 +1602,16 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
         } finally {
           setBusy("");
         }
+      };
+      // 手动导入：只接受 SnowLuma 的启动文件（SnowLuma.exe / launcher.bat）。
+      // 选完让后端验证并保存安装目录；失败会弹窗说明"这个文件为什么不行"。
+      const pickSnowLumaFile = async () => {
+        setSnowImport(false);
+        try {
+          const r = await browseNative("file", "选择 SnowLuma 的启动文件（SnowLuma.exe 或 app\launcher.bat）", "snowluma");
+          if (r.ok && r.path) await detectSnowLuma(String(r.path));
+          else if (!r.cancelled) toast(`✗ ${r.error || "打不开选择框"}`);
+        } catch (e) { toast(`✗ ${e.message}`); }
       };
       // 弹窗里的「浏览…」：选完直接重试检测。
       const pickSnowLuma = async () => {
@@ -1564,8 +1763,13 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
               ? h("div", { className: "qbw-hint", style: { color: "#c0392b" } },
                 "有组件因本地改动/未推送提交被拒，详情点「查看详情」。")
               : null,
+            (updates.pending ?? []).length
+              ? h("div", { className: "qbw-hint", style: { marginTop: "2px" } },
+                "下载完成 ≠ 已更新：需要完全退出 DSH 再打开才会应用（只刷新页面不会生效）。")
+              : null,
             h("div", { className: "qbw-actions" },
               h(Btn, { onClick: () => checkUpdates(), disabled: !!busy }, busy === "updates" ? "检查中…" : "检查更新"),
+              h(Btn, { kind: "qbw-btn2", onClick: runCompat, disabled: !!busy }, busy === "compat" ? "体检中…" : "插件体检"),
               (updates.results ?? []).some((x) => x.status === "unknown" || x.status === "failed")
                 ? h(Btn, {
                   kind: "qbw-btn2",
@@ -1599,7 +1803,10 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
                       const r = await api("/updates", { method: "POST", body: { action: "apply", ids } });
                       const staged = (r.results ?? []).filter((x) => x.ok && x.staged);
                       const failed = (r.results ?? []).filter((x) => !x.ok);
-                      if (r.ok && staged.length) toast(`⏳ 已下载 ${staged.length} 个组件，退出并重新打开 DSH 后应用（尚未更新）`);
+                      if (r.ok && staged.length) {
+                        toast(`⏳ 已下载 ${staged.length} 个组件，退出并重新打开 DSH 后应用（尚未更新）`);
+                        setRestartHint({ staged: true, count: staged.length });
+                      }
                       else if (r.ok) toast(`✓ 已更新 ${r.updated} 个组件${r.restartRequired ? "，请重启对应服务" : ""}`);
                       else {
                         const f = failed[0] ?? {};
@@ -1609,7 +1816,10 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
                     } catch (e) { toast(`✗ 更新失败：${e.message}`); } finally { setBusy(""); }
                   },
                 }, busy === "apply-update" ? "更新中…" : `立即更新（${(updates.pending ?? []).length}）`)
-                : null,
+                  : (updates.lastApply?.deterministic
+                    ? h(Btn, { onClick: () => window.open("https://github.com/Mieksido/surfcore/releases/latest", "_blank", "noopener") },
+                      "此版本无法自动更新：手动下载")
+                    : null),
               h(Btn, { kind: "qbw-btn2", onClick: () => setUpdateOpen(true), disabled: !(updates.results ?? []).length }, "查看详情"))),
           h("div", { style: { marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(127,127,127,.18)" } },
             h("div", { className: "qbw-hint" },
@@ -1654,6 +1864,18 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
               tz.configured ? h(Btn, { kind: "qbw-btn2", disabled: !!busy, onClick: () => saveTimeZone("") }, "恢复跟随系统") : null),
             h("div", { className: "qbw-hint", style: { marginTop: "4px" } },
               "填 IANA 时区名（Asia/Shanghai、America/New_York、UTC…）或 UTC+8 这样的整点偏移。已排好的定点任务在换时区后的下一轮按新时区重新排。")) : null,
+          (gateData?.events ?? []).length
+            ? h("div", { className: "qbw-card" },
+              h("h4", null, "安全提醒 ", h("span", { className: "qbw-badge " + ((gateData?.counts?.L3 ?? 0) > 0 ? "bad" : "warn") },
+                `未确认 ${gateData?.counts?.unacked ?? 0} 条`)),
+              (gateData.events ?? []).slice(0, 6).map((ev) => h("div", { className: "qbw-kv", key: ev.id },
+                h("span", null, `${ev.level} · ${ev.gate}`),
+                h("span", null, `${ev.impact || ev.reason?.message || ev.event}${ev.ack ? "" : "（未确认）"}`))),
+              h("div", { className: "qbw-hint" }, "L0 静默、L1 仅记录；L2/L3 才弹窗。"),
+              h("div", { className: "qbw-actions", style: { marginTop: "6px" } },
+                h(Btn, { kind: "qbw-btn2", onClick: () => ackGate(null), disabled: !(gateData?.counts?.unacked > 0) }, "全部确认"),
+                h(Btn, { kind: "qbw-btn2", onClick: loadGateEvents }, "刷新")))
+            : null,
           h(AdvancedSettings, { note: "SnowLuma 安装 / 扩展与平台：装好后很少改" },
             h("div", { className: "qbw-card" },
               h("h4", null, "SnowLuma 安装"),
@@ -1662,9 +1884,11 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
               h("div", { className: "qbw-actions" },
                 h(Btn, { kind: "qbw-btn2", onClick: () => window.open(snow.downloadUrl || "https://github.com/SnowLuma/SnowLuma/releases/latest", "_blank", "noopener") }, "打开官方下载页"),
                 h(Btn, { onClick: () => detectSnowLuma(), disabled: !!busy }, "检测已安装的 SnowLuma"),
+                h(Btn, { kind: "qbw-btn2", onClick: () => setSnowImport(true), disabled: !!busy }, "手动选择已安装的 SnowLuma"),
                 h(Browse, { mode: "dir", title: "选择 SnowLuma2 解压出来的根目录（里面有 app）", onPick: (picked) => detectSnowLuma(picked) }),
                 h(Btn, { kind: "qbw-btn2", onClick: () => act("start-snowluma"), disabled: !!busy }, "只打开 SnowLuma")),
-              h("div", { className: "qbw-hint" }, "检测只会在常见位置里猜。装在别处（例如 D:\\软件\\SnowLuma2）就点「浏览…」自己选根目录（里面有 app）；选 app 目录或 app\\launcher.bat 也能识别。"),
+              h("div", { className: "qbw-hint" }, "检测只会在常见位置里猜。装在别处（例如 D:\软件\SnowLuma2）就点「手动选择已安装的 SnowLuma」，选 SnowLuma.exe 或 app\launcher.bat（也可以直接选解压根目录）。"),
+              h("div", { className: "qbw-hint" }, "「手动选择」只是告诉插件你装好的 SnowLuma 在哪：不下载、不安装、不移动、不删除任何文件。"),
               h("div", { className: "qbw-hint" }, "SurfCore 只负责检测、打开和查看连接状态；SnowLuma2 本体按 EULA 不随插件分发，安装与扫码仍需你完成。")),
             h("div", { className: "qbw-card" },
               h("h4", null, "扩展与平台"),
@@ -1677,6 +1901,20 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
             setBusy("backup");
             try { const r = await api("/diagnostics", { method: "POST", body: { action: "backup" } }); toast(`✓ 已备份 ${r.created?.length ?? 0} 个文件`); } catch (e) { toast(`✗ ${e.message}`); } finally { setBusy(""); }
           }, disabled: !!busy }, "立即备份配置")),
+        snowImport ? h("div", { className: "qbw-modal-backdrop", onClick: (e) => { if (e.target === e.currentTarget) setSnowImport(false); } },
+          h("div", { className: "qbw-modal" },
+            h("h3", null, "导入 SnowLuma 的安装位置"),
+            h("p", null, "这里导入的是**你已经装好的 SnowLuma 的启动文件**，不是安装包；SurfCore 不会下载、不会安装、不会移动或删除任何文件。"),
+            h("p", { className: "qbw-hint" }, "请选择下面任意一个："),
+            h("ul", { style: { margin: "4px 0 8px", paddingLeft: "18px", fontSize: "12px", lineHeight: "19px" } },
+              h("li", null, "SnowLuma.exe —— SnowLuma2 目录里的主程序"),
+              h("li", null, "app\launcher.bat —— 标准布局里的启动脚本"),
+              h("li", null, "解压出来的 SnowLuma2 根目录（点「改为选择目录」）")),
+            h("p", { className: "qbw-hint" }, "选完只会做两件事：验证这个位置确实是 SnowLuma、把安装目录记进配置。不复制、不改名、不卸载。"),
+            h("div", { className: "qbw-actions" },
+              h(Btn, { onClick: pickSnowLumaFile, disabled: !!busy }, "选择文件…"),
+              h(Btn, { kind: "qbw-btn2", onClick: async () => { setSnowImport(false); await pickSnowLuma(); } }, "改为选择目录"),
+              h(Btn, { kind: "qbw-btn2", onClick: () => setSnowImport(false) }, "取消")))) : null,
         snowError ? h(ErrorModal, {
           title: snowError.title,
           message: snowError.message,
@@ -1689,11 +1927,42 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
           ],
           onClose: () => setSnowError(null),
         }) : null,
+        restartHint ? h("div", { className: "qbw-modal-backdrop", onClick: (e) => { if (e.target === e.currentTarget) setRestartHint(null); } },
+          h("div", { className: "qbw-modal" },
+            h("h3", null, restartHint.staged ? "更新已下载：重启 DSH 后生效" : "有可用更新：安装后需要重启 DSH"),
+            h("p", null, restartHint.staged
+              ? "文件已经下载并排队，退出 DSH 后会自动替换（尚未更新）。只刷新页面不会应用。"
+              : "这里只是发现了新版本；点「立即更新」下载后，需要完全退出 DSH 再打开，新版本才会生效。"),
+            h("ol", { style: { margin: "6px 0 8px", paddingLeft: "20px", fontSize: "12px", lineHeight: "20px" } },
+              h("li", null, "完全退出 DSH（包括托盘图标 / 任务栏里的窗口，不能只关设置页）"),
+              h("li", null, "重新打开 DSH"),
+              h("li", null, "回到这里点「检查更新」确认版本已变")),
+            h("p", { className: "qbw-hint" },
+              "为什么必须重启：更新助手要等 DSH 退出后才替换文件；插件本身跑在 DSH 进程里，没法热更新自己。"),
+            h("div", { className: "qbw-actions" },
+              restartHint.staged
+                ? h(Btn, { onClick: () => setRestartHint(null) }, "我知道了")
+                : h(Btn, { onClick: () => { setRestartHint(null); setUpdateOpen(true); } }, "去更新"),
+              h(Btn, { kind: "qbw-btn2", onClick: () => setRestartHint(null) }, "稍后")))
+          ) : null,
         updateOpen ? h(UpdatesModal, {
           status: updates,
           toast,
           onClose: () => setUpdateOpen(false),
           onDone: async () => { setUpdateOpen(false); await reload(); },
+        }) : null,
+        (compat || compatError) ? h(CompatModal, {
+          report: compat,
+          error: compatError,
+          busy,
+          toast,
+          onClose: () => { setCompat(null); setCompatError(null); },
+          onRetry: runCompat,
+        }) : null,
+        gateAlert ? h(GateAlertModal, {
+          event: gateAlert,
+          onClose: () => { if (gateAlert) dismissedGates.current.add(gateAlert.id); setGateAlert(null); },
+          onAck: ackGate,
         }) : null);
     }
 
@@ -2627,6 +2896,7 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
             if (stopped) return;
             if (result.status === "confirmed") {
               stopped = true; clearInterval(timer); idRef.current = "";
+              setState({ phase: "confirmed", account: result.account || {} });
               confirmedRef.current?.(result.account, target);
             } else if (result.status === "scanned") {
               setState((s) => ({ ...s, phase: "scanned" }));
@@ -2679,15 +2949,27 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
             target === "fish" ? h("label", { className: "qbw-hint", style: { display: "flex", gap: "6px", alignItems: "center", justifyContent: "center", marginTop: "8px" } },
               h("input", { type: "checkbox", checked: allowSameAsOwner, onChange: (e) => setAllowSameAsOwner(e.target.checked) }),
               "我只有一个 B站 号（主人=小肥鱼），允许用主人号当小肥鱼") : null) : null,
-          state.phase === "expired" ? h("p", { className: "qbw-err" }, "二维码已过期，请重新生成。") : null,
+          state.phase === "confirmed" ? h("div", null,
+            h("p", { style: { textAlign: "center", fontSize: "15px", color: "#67c23a", fontWeight: 600 } }, "✅ 登录成功"),
+            h("p", { style: { textAlign: "center" } },
+              `${state.account?.name || "（未取到昵称）"}（${state.account?.mid || "?"}）`),
+            h("p", { className: "qbw-hint", style: { textAlign: "center" } },
+              "已写入凭据。可以在「B站 登录账号」卡片点「核查登录」再确认一次；如果 B站 上改了名，核查会显示最新昵称。"),
+            state.account?.savedAt ? h("p", { className: "qbw-hint", style: { textAlign: "center" } }, `保存时间：${new Date(state.account.savedAt).toLocaleString("zh-CN", { hour12: false })}`) : null) : null,
+          state.phase === "expired" ? h("div", null,
+            h("p", { className: "qbw-err" }, "二维码已过期。"),
+            h("p", { className: "qbw-hint" }, "建议：点下面「重新生成」；如果一直过期，确认手机 B站 App 能正常扫码。")) : null,
           state.phase === "wrong" ? h("div", null,
             h("p", { className: "qbw-err" }, `✗ ${state.error || "扫错账号"}`),
             h("p", { className: "qbw-hint" }, "扫错号不会保存。要点：① 想用主人同一个号 → 勾下方「我只有一个 B站 号」再扫；② 想换到别的号 → 点下面「换号（清除旧凭据）」再扫。"),
             h("p", { className: "qbw-hint" }, state.hint || "")) : null,
-          state.phase === "error" ? h("p", { className: "qbw-err" }, `✗ ${state.error || "扫码失败"}`) : null,
+          state.phase === "error" ? h("div", null,
+            h("p", { className: "qbw-err" }, `✗ ${state.error || "扫码失败"}`),
+            h("p", { className: "qbw-hint" }, state.hint || "建议：点「重新生成」再试；仍失败请重启 DSH（旧代码可能没有扫码接口）。")) : null,
           notice ? h("p", { className: "qbw-hint", style: { textAlign: "center" } }, notice) : null,
           h("div", { className: "qbw-actions", style: { justifyContent: "center" } },
-            live ? null : h(Btn, { onClick: start }, "重新生成"),
+            state.phase === "confirmed" ? h(Btn, { onClick: close }, "完成") : null,
+            live || state.phase === "confirmed" ? null : h(Btn, { onClick: start }, "重新生成"),
             h(Btn, {
               kind: "qbw-btn2",
               onClick: async () => {
@@ -2870,6 +3152,24 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
       const [cookie, setCookie] = useState({ sessdata: "", bili_jct: "", buvid3: "" });
       const [cookieMsg, setCookieMsg] = useState("");
       const [qrFish, setQrFish] = useState(false);
+      const [accounts, setAccounts] = useState(null);
+      const [accountCheck, setAccountCheck] = useState({});
+      const loadAccounts = useCallback(async () => {
+        try { setAccounts(await api("/bili/accounts")); } catch { setAccounts(null); }
+      }, []);
+      useEffect(() => { loadAccounts(); }, [loadAccounts]);
+      const verifyAccount = async (target) => {
+        setAccountCheck((s) => ({ ...s, [target]: { busy: true } }));
+        try {
+          const r = await api("/bili/account/verify", { method: "POST", body: { target } });
+          setAccountCheck((s) => ({ ...s, [target]: r }));
+          if (r.ok) toast(`✓ ${target === "owner" ? "主人" : "小肥鱼"} 登录有效：${r.account?.name}（${r.account?.mid}）`);
+          else toast(`✗ 核查失败：${r.error || "原因不明"}`);
+          await loadAccounts();
+        } catch (e) {
+          setAccountCheck((s) => ({ ...s, [target]: { ok: false, error: e.message } }));
+        }
+      };
       const [deps, setDeps] = useState("");
       const [pending, setPending] = useState([]);
       const [pendingMsg, setPendingMsg] = useState("");
@@ -2886,6 +3186,28 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
         try { const r = await api("/bili/pending"); setPending(r.items ?? []); } catch {}
       }, []);
       useEffect(() => { loadPending(); }, [loadPending]);
+
+      const accountCard = h("div", { className: "qbw-card", style: { marginTop: "10px" } },
+        h("h4", null, "B站 登录账号"),
+        h("div", { className: "qbw-hint", style: { marginTop: "2px" } },
+          "显示扫码登录的账号；「核查」会读凭据文件再问一次 B站，确认登录还有效、mid 没串。"),
+        [["fish", "小肥鱼"], ["owner", "主人"]].map(([target, label]) => {
+          const acc = target === "owner" ? accounts?.owner : accounts?.fish;
+          const chk = accountCheck[target] || {};
+          return h("div", { key: target, style: { marginTop: "8px", padding: "8px 10px", border: "1px solid rgba(127,127,127,.2)", borderRadius: "8px" } },
+            h("div", { style: { fontWeight: 600 } },
+              `${label}：`,
+              acc?.configured ? `${acc.name || "（未取到昵称）"}（${acc.mid}）` : "未登录",
+              chk.busy ? h("span", { className: "qbw-hint" }, " 核查中…") : null),
+            acc?.savedAt ? h("div", { className: "qbw-hint" }, `保存时间：${new Date(acc.savedAt).toLocaleString("zh-CN", { hour12: false })}`) : null,
+            h("div", { style: { display: "flex", gap: "8px", marginTop: "6px", flexWrap: "wrap" } },
+              h(Btn, { kind: "qbw-btn2", onClick: () => verifyAccount(target), disabled: !!chk.busy || !acc?.configured }, "核查登录"),
+              target === "fish" ? h(Btn, { kind: "qbw-btn2", onClick: () => setQrFish(true) }, acc?.configured ? "重新扫码" : "扫码登录") : null),
+            chk.ok === true ? h("div", { className: "qbw-hint", style: { color: "#67c23a", marginTop: "4px" } },
+              `✓ 登录有效：${chk.account?.name || "（未取到昵称）"}（${chk.account?.mid}）`) : null,
+            chk.ok === false ? h("div", { className: "qbw-err", style: { marginTop: "4px" } },
+              `✗ ${chk.error || "核查失败"}${chk.hint ? `（建议：${chk.hint}）` : ""}`) : null);
+        }));
 
       const groups = query.trim()
         ? BILI_FIELDS.map((g) => ({ ...g, fields: g.fields.filter((f) => `${g.group} ${f.label} ${f.hint ?? ""} ${f.path.join(".")}`.toLowerCase().includes(query.trim().toLowerCase())) })).filter((g) => g.fields.length)
@@ -2967,6 +3289,7 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
                 h("input", { className: "qbw-input", placeholder: "buvid3（可空）", value: cookie.buvid3, onChange: (e) => setCookie((s) => ({ ...s, buvid3: e.target.value })) }),
                 h(Btn, { kind: "qbw-btn2", onClick: saveCookie, disabled: !!busy || !cookie.sessdata || !cookie.bili_jct }, "写入凭据"),
                 cookieMsg ? h("div", { className: cookieMsg.startsWith("✓") ? "qbw-ok" : "qbw-err" }, cookieMsg) : null)),
+          accountCard,
             h("div", { className: "qbw-card" }, h("h4", null, "待审核"),
               h("p", null, "她回复别人之前，草稿先到这儿；你点「发」才发。"),
               pending.length === 0 ? h("p", null, "（队列是空的）") : pending.map((x) => h("div", { key: x.id, className: "qbw-item", style: { marginTop: "6px" } },
@@ -2987,8 +3310,9 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           target: "fish",
           onClose: () => setQrFish(false),
           onConfirmed: async (account) => {
-            setQrFish(false);
             setCookieMsg(`✓ 已绑定 ${account.name || account.mid}（${account.mid}）`);
+            await loadAccounts();
+            await verifyAccount("fish");
             await reload();
           },
         }) : null);
@@ -3496,6 +3820,9 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
       const [packsDir, setPacksDir] = useState("");
       const [dirInput, setDirInput] = useState("");
       const [mirror, setMirror] = useState("");
+      // 语音自检：三步（服务/合成/发送前置）各给结论，避免"语音坏了"只能靠猜。
+      const [ttsCheck, setTtsCheck] = useState(null);
+      const [ttsChecking, setTtsChecking] = useState(false);
       const [rules, setRules] = useState(null);
       const [err, setErr] = useState("");
       const [busyId, setBusyId] = useState("");
@@ -3657,6 +3984,45 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
         finally { setBusyId(""); }
       };
 
+      // 网盘离线包：Electron 里新窗口会被拦，交给宿主用系统浏览器打开；失败则复制链接兜底。
+      const NETDISK_URL = "https://pan.quark.cn/s/ec6cf2b123de?pwd=sxUZ";
+      const copyNetdisk = async () => {
+        try { await navigator.clipboard.writeText(NETDISK_URL); if (toast) toast("✓ 网盘链接已复制（提取码 sxUZ）"); }
+        catch (e) { if (toast) toast(`复制失败：${e.message}；链接：${NETDISK_URL}`); }
+      };
+      const openNetdisk = async () => {
+        try {
+          const r = await api("/voice/packs/netdisk", { method: "POST" });
+          if (r.ok) { if (toast) toast("✓ 已用浏览器打开网盘（提取码 sxUZ）"); return; }
+          if (toast) toast(`✗ ${r.error || "打不开浏览器"}${r.hint ? `；${r.hint}` : ""}`);
+        } catch (e) {
+          if (toast) toast(`✗ ${e.message}`);
+        }
+        await copyNetdisk();
+      };
+
+      const runTtsCheck = async () => {
+        setTtsChecking(true); setTtsCheck(null);
+        try {
+          const r = await api("/voice/tts-check", { method: "POST", body: {} });
+          setTtsCheck(r);
+          if (toast) toast(r.ok ? "✓ 语音自检通过" : `✗ 自检发现问题：${(r.stages || []).find((x) => !x.ok)?.name || "未知"}`);
+        } catch (e) {
+          setTtsCheck({ ok: false, error: e.message, stages: [] });
+          if (toast) toast(`✗ 自检失败：${e.message}`);
+        } finally { setTtsChecking(false); }
+      };
+
+      const stageRow = (st) => h("div", {
+        key: st.name,
+        style: { marginTop: "6px", padding: "6px 8px", borderRadius: "6px", background: st.ok ? "rgba(103,194,58,.10)" : "rgba(192,57,43,.12)" },
+      },
+        h("div", { style: { fontWeight: 600 } },
+          `${st.ok ? "✅" : "❌"} ${st.name === "service" ? "服务" : st.name === "synth" ? "合成" : "发送前置"}`,
+          st.ms ? h("span", { style: { fontWeight: 400, opacity: 0.7, marginLeft: "6px" } }, `${st.ms}ms`) : null),
+        st.detail ? h("div", { className: "qbw-hint", style: { marginTop: "2px" } }, st.detail) : null,
+        st.hint ? h("div", { className: "qbw-hint", style: { marginTop: "2px" } }, `建议：${st.hint}`) : null);
+
       const act = async (id, action, body) => {
         setBusyId(id);
         setMsg((m) => ({ ...m, [id]: action === "install" ? "开始安装…" : "处理中…" }));
@@ -3809,6 +4175,24 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           switchMsg ? h("div", { style: { fontSize: "12px", marginTop: "6px", opacity: 0.85 } }, switchMsg) : null,
           h("div", { style: { fontSize: "12px", opacity: 0.65, marginTop: "6px" } }, "只能运行一个；切换会自动停掉另一个。")),
         packs.map(card),
+        h("div", { className: "qbw-card", style: { marginTop: "10px" } },
+          h("h4", null, "语音自检"),
+          h("div", { className: "qbw-hint", style: { marginTop: "2px" } },
+            "三步分开看：服务是否在跑 → 能不能合成 → 能不能发（不真的发消息）。出问题时把结果发给开发者。"),
+          h("div", { className: "qbw-actions", style: { marginTop: "8px" } },
+            h(Btn, { onClick: runTtsCheck, disabled: ttsChecking }, ttsChecking ? "检测中…（合成可能要几秒）" : "开始自检")),
+          ttsCheck ? h("div", { style: { marginTop: "8px" } },
+            (ttsCheck.stages || []).map(stageRow),
+            ttsCheck.ok ? null : h("div", { className: "qbw-hint", style: { marginTop: "6px" } }, `route=${ttsCheck.route || "?"} · ${ttsCheck.error || ""}`)
+          ) : null),
+        h("div", { style: { marginTop: "10px", padding: "10px 12px", borderRadius: "10px", border: "1px solid rgba(230,162,60,.45)", background: "rgba(230,162,60,.08)" } },
+          h("div", { style: { fontSize: "13px", fontWeight: 600 } }, "网络不稳定装不上？用网盘下载离线包（本地包 / 云端包都适用）"),
+          h("div", { style: { fontSize: "12px", opacity: 0.85, marginTop: "2px" } },
+            "网盘里是完整的离线包。下载解压后，点对应卡片的「导入离线包…」，选择解压出来的 voice-local 或 voice-cloud 文件夹；导入会校验文件、保留旧包备份，失败会告诉你缺什么。"),
+          h("div", { style: { display: "flex", gap: "8px", marginTop: "8px", flexWrap: "wrap", alignItems: "center" } },
+            h(Btn, { onClick: openNetdisk }, "打开网盘下载（提取码 sxUZ）"),
+            h(Btn, { kind: "qbw-btn2", onClick: copyNetdisk }, "复制链接"),
+            h("span", { style: { fontSize: "12px", opacity: 0.7 } }, "装完仍要按卡片提示启动/填密钥"))),
 
         h("div", { style: { marginTop: "10px", padding: "10px 12px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px" } },
           h("div", { style: { fontSize: "13px", fontWeight: 600 } }, "下载链路"),
@@ -4962,7 +5346,14 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           st && st.installing ? h(ProgressBar, { pct: st.installing.progress, phase: st.installing.phase, err: st.installing.error, indeterminate: /依赖|模型/.test(String(st.installing.phase || '')) && Number(st.installing.progress || 0) >= 99 }) : null,
           h("div", { className: "qbw-actions" },
             !st || !st.installed ? h(Btn, { disabled: busy === "install" || !form.source.trim(), onClick: async () => {
-              const r0 = await api("/pet/install", { method: "POST", body: {} }).catch((e) => ({ ok: false, error: e.message }));
+              const r0 = await api("/pet/install", {
+                method: "POST",
+                body: {
+                  source: form.source.trim(),
+                  appDir: form.appDir.trim(),
+                  electronPath: form.electronPath.trim(),
+                },
+              }).catch((e) => ({ ok: false, error: e.message }));
               if (r0 && r0.ok === false) { setErr(r0.error); return; }
               setBusy("install");
               for (let i = 0; i < 600; i += 1) {
@@ -4992,7 +5383,10 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
                   await read();
                 } catch (e) { setErr(e.message); } finally { setBusy(""); }
               } }, busy === "clean" ? "清理中…" : "清理残留后重试")) : null,
-            st && st.installed && !st.running ? h(Btn, { onClick: () => act("start"), disabled: !!busy }, "启动") : null,
+            st && st.installed && !st.running ? h(Btn, {
+              onClick: () => act("start", { electronPath: form.electronPath.trim() }),
+              disabled: !!busy,
+            }, "启动") : null,
             st && st.installed && st.running ? h(Btn, { kind: "qbw-btn2", onClick: () => act("stop"), disabled: !!busy }, "停止") : null,
             st && st.installed ? h(Btn, { kind: "qbw-btn2", onClick: () => act("remove"), disabled: !!busy }, "卸载") : null)),
         h("div", { className: "qbw-card", style: { marginTop: "10px" } },
@@ -5008,6 +5402,8 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
             h("input", { className: "qbw-input", value: form.appDir, placeholder: "留空 = ~/.dsh/surfcore/pet/app", onChange: (e) => setForm((f) => ({ ...f, appDir: e.target.value })) }),
             h(Browse, { mode: "dir", title: "选择桌宠安装目录", onPick: (v) => setForm((f) => ({ ...f, appDir: v })) })),
           h("div", { className: "qbw-hint", style: { marginTop: "4px" } }, "沙箱 / 只读用户目录的环境里，把安装目录指到可写位置（例如工作区内）。"),
+          h("div", { className: "qbw-hint", style: { marginTop: "4px" } },
+            "Windows 请填**带盘符**的完整路径（例如 D:\dshwork\pet）；只写 /dshwork/pet 会被装到当前盘。"),
           h("div", { className: "qbw-hint", style: { marginTop: "6px" } },
             `官方最新包：${st?.defaults?.zipUrl || "https://github.com/Mieksido/surfpet/releases/latest/download/pet-pack.zip"}`),
           h("div", { className: "qbw-actions" },

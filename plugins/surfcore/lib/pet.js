@@ -61,6 +61,14 @@ export function checkAppDir(target, { protectedPaths = [], allowNonEmpty = false
   const raw = String(target ?? '').trim();
   const abs = path.resolve(raw || '.');
   if (!raw) return { ok: false, abs, reason: '路径为空' };
+  // Windows 下必须带盘符：`/dswork/pet` 会被解析到"当前盘"，用户以为装到 D 盘、其实进了 C 盘（2026-10-30 反馈）
+  if (process.platform === 'win32' && !/^[A-Za-z]:[\\/]/.test(raw)) {
+    return {
+      ok: false, abs, code: 'pet.path-no-drive',
+      reason: `「${raw}」缺少盘符（会装到当前盘 ${abs}）`,
+      hint: 'Windows 请填 D:\dshwork\pet 这种带盘符的完整路径',
+    };
+  }
   if (path.parse(abs).root === abs) return { ok: false, abs, reason: '不能是磁盘根目录' };
 
   const norm = (p) => path.resolve(String(p)).replace(/[\\/]+$/, '').toLowerCase();
@@ -481,7 +489,13 @@ export function createPetService({ stateDir, pluginLog = () => {}, subprocess = 
   async function doInstall(sourceOverride) {
     const cfg = readConfig();
     const source = String(sourceOverride ?? cfg.source ?? '').trim();
-    if (!source) return { ok: false, error: '请先填写安装包地址（zip 的本地路径或 http(s) 链接）' };
+    if (!source) {
+      return {
+        ok: false, code: 'pet.source-missing', field: 'source',
+        error: '还没有安装包地址（zip 的本地路径或 http(s) 直链）',
+        hint: '点「用官方最新版」自动填官方 pet-pack.zip，或把 zip 路径/直链粘进「安装包地址」再点安装',
+      };
+    }
     // 安装前先停：运行中覆盖文件会撞占用（卸载一直有 stop，安装以前没有）。
     try { if (running()) await stop(); } catch {}
     // 任何会删安装目录的安装方式都先过安全闸（RISK R34）。
@@ -570,9 +584,35 @@ export function createPetService({ stateDir, pluginLog = () => {}, subprocess = 
   }
 
   /** 异步安装：立刻返回，前端轮询 status().installing 画进度条。 */
-  async function startInstall(sourceOverride) {
+  async function startInstall(sourceOverride, patch = {}) {
     if (installJob && !['完成', '失败'].includes(installJob.phase)) {
       return { ok: false, error: '安装正在进行中' };
+    }
+    // 设置页表单直接随安装请求一起提交：不能因为用户没点「保存设置」就丢掉填好的目录/地址
+    // （2026-10-30：填了安装目录，点安装仍报"请先填写安装包地址"，config.json 里 source/appDir 都是空）。
+    if (patch && typeof patch === 'object') {
+      const next = {};
+      if (typeof patch.source === 'string' && patch.source.trim()) next.source = patch.source.trim();
+      else if (sourceOverride && String(sourceOverride).trim()) next.source = String(sourceOverride).trim();
+      if (typeof patch.appDir === 'string') next.appDir = patch.appDir.trim();
+      if (typeof patch.electronPath === 'string') next.electronPath = patch.electronPath.trim();
+      if (Object.keys(next).length) configure(next);
+    }
+    const cfgNow = readConfig();
+    const sourceNow = String(sourceOverride ?? cfgNow.source ?? '').trim();
+    if (!sourceNow) {
+      return {
+        ok: false, code: 'pet.source-missing', field: 'source',
+        error: '还没有安装包地址（zip 的本地路径或 http(s) 直链）',
+        hint: '点「用官方最新版」自动填官方 pet-pack.zip，或把 zip 路径/直链粘进「安装包地址」再点安装',
+      };
+    }
+    if (cfgNow.appDir && process.platform === 'win32' && !/^[A-Za-z]:[\\/]/.test(String(cfgNow.appDir))) {
+      return {
+        ok: false, code: 'pet.path-no-drive', field: 'appDir',
+        error: `安装目录「${cfgNow.appDir}」缺少盘符（会被装到当前盘）`,
+        hint: 'Windows 请填 D:\dshwork\pet 这种带盘符的完整路径',
+      };
     }
     setJob({ phase: '准备中', progress: 0, error: null });
     (async () => {
