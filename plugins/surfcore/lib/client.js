@@ -1300,6 +1300,10 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
               style: { marginTop: "6px", padding: "8px 10px", borderRadius: "8px", background: "rgba(192,57,43,.12)" },
             },
             h("div", { style: { fontWeight: 600 } }, `更新被阻止（${la.code || "failed"}）`),
+            (la.mismatchCount || la.missingCount)
+              ? h("div", { className: "qbw-hint", style: { marginTop: "2px" } },
+                `清单不符 ${la.mismatchCount ?? 0} 个 / 缺失 ${la.missingCount ?? 0} 个`)
+              : null,
             h("div", { className: "qbw-hint", style: { marginTop: "2px" } }, la.reason || "原因不明"),
             la.hint ? h("div", { className: "qbw-hint", style: { marginTop: "2px" } }, `建议：${la.hint}`) : null,
             h("div", { style: { display: "flex", gap: "8px", marginTop: "6px", flexWrap: "wrap" } },
@@ -1315,8 +1319,13 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
           h("div", { className: "qbw-actions", style: { flexShrink: 0, paddingTop: "10px" } },
             h(Btn, { kind: "qbw-btn2", onClick: () => (never ? dismissThis() : onClose?.()), disabled: working },
               never ? "不再提示本次" : "稍后"),
-            h(Btn, { onClick: applySelected, disabled: working || !selected.size },
-              working ? "更新中…" : `立即更新（${selected.size}）`))));
+            h(Btn, {
+              onClick: applySelected,
+              disabled: working || !selected.size || status?.lastApply?.deterministic === true,
+            },
+              status?.lastApply?.deterministic === true
+                ? "此版本无法自动更新（请手动下载）"
+                : (working ? "更新中…" : `立即更新（${selected.size}）`)))));
     }
 
     // 通用错误报告弹窗（AGENTS 1.7）：失败必须可见 + 给下一步。
@@ -1612,7 +1621,10 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
                     } catch (e) { toast(`✗ 更新失败：${e.message}`); } finally { setBusy(""); }
                   },
                 }, busy === "apply-update" ? "更新中…" : `立即更新（${(updates.pending ?? []).length}）`)
-                : null,
+                  : (updates.lastApply?.deterministic
+                    ? h(Btn, { onClick: () => window.open("https://github.com/Mieksido/surfcore/releases/latest", "_blank", "noopener") },
+                      "此版本无法自动更新：手动下载")
+                    : null),
               h(Btn, { kind: "qbw-btn2", onClick: () => setUpdateOpen(true), disabled: !(updates.results ?? []).length }, "查看详情"))),
           h("div", { style: { marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(127,127,127,.18)" } },
             h("div", { className: "qbw-hint" },

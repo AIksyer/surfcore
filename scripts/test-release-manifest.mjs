@@ -24,7 +24,7 @@ const tracked = new Set(
 const extra = keys.filter((rel) => !tracked.has(rel));
 ok(extra.length === 0, '清单里没有"未被 git 跟踪"的文件', extra.slice(0, 5).join('、'));
 
-const EXCLUDE_DIRS = ['_backups/', 'audio/', 'state/', 'backups/', 'logs/', 'staging/', 'node_modules/', 'video/', 'dist/'];
+const EXCLUDE_DIRS = ['_backups/', 'audio/', 'state/', 'backups/', 'logs/', 'staging/', 'node_modules/', 'video/', 'dist/', 'roles/', 'assets/', 'examples/'];
 const badDir = keys.filter((rel) => EXCLUDE_DIRS.some((d) => rel.startsWith(d)));
 ok(badDir.length === 0, '清单里没有运行数据/备份/视频等目录', badDir.slice(0, 5).join('、'));
 
@@ -34,6 +34,29 @@ ok(manifest.version === pkg.version, `清单版本与 package.json 一致（${ma
 // 清单里每个文件都必须真的存在于仓库（哈希才有意义）
 const missing = keys.filter((rel) => !fs.existsSync(path.resolve(rel)));
 ok(missing.length === 0, '清单里的文件都存在', missing.slice(0, 5).join('、'));
+
+// ── 核心：清单哈希必须等于 git blob（= GitHub 归档字节），不能等于工作区文件 ──
+// 2026-10-30 事故：工作区 CRLF / git 提交 LF → 清单与发布包 92 处哈希不符。
+{
+  const crypto = await import('node:crypto');
+  const probe = ['.gitignore', 'README.en.md', 'docs/guides/VERSIONS.md', 'docs/guides/DSH_SETUP.md', 'package.json'];
+  let checked = 0; const bad = [];
+  for (const rel of probe) {
+    let blob;
+    try { blob = execFileSync('git', ['show', `HEAD:${rel}`], { maxBuffer: 32 * 1024 * 1024 }); } catch { continue; }
+    const hash = crypto.createHash('sha256').update(blob).digest('hex');
+    checked += 1;
+    if (manifest.files?.[rel] !== hash) bad.push(rel);
+  }
+  ok(checked >= 3, `抽查 ${checked} 个文件的 blob 哈希`, '样本文件读不到');
+  ok(bad.length === 0, '清单哈希 == git blob 哈希（不是工作区文件）', bad.join('、'));
+}
+
+// 发版硬门禁：清单与 HEAD 内容必须逐字节一致
+{
+  const out = execFileSync(process.execPath, ['scripts/release-manifest.mjs', '--verify-ref', 'HEAD'], { encoding: 'utf8' });
+  ok(/问题 0 个/.test(out), 'verify-ref HEAD 通过（0 问题）', out.slice(-200));
+}
 
 if (failures) { console.error(`\n${failures} 项失败`); process.exit(1); }
 console.log('\n✅ test-release-manifest 通过');

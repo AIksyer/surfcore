@@ -4,6 +4,23 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.7.11] - 2026-10-30
+
+### 修复（0.7.9 的更新包自身哈希不符，自动更新仍失败）
+
+- **根因**：清单的 sha256 取自**工作目录文件**（Windows 是 CRLF），发布物是 git 提交（LF）→
+  两边哈希必然不同；0.7.9 只修了“文件集合”，没修“内容来源”。
+- **修法**：
+  - 清单改用 `git cat-file` 读 **HEAD blob 字节**计算，与 GitHub 归档逐字节一致；
+  - 新增 `--verify-ref <ref>` **发版硬门禁**：清单与 ref 内容不一致就 exit 1；
+  - 镜像同步白名单补 `.gitignore` 等 dotfile（漏同步同样会让清单对不上）；
+  - 客户端把 `verify.staging-mismatch` 标为**确定性失败**：原因带不符/缺失数量，hint 说明
+    “发布侧问题、重试无效”，弹窗禁用「立即更新」并给「手动下载」；`lastApplyFailure`
+    增加 `deterministic / mismatchCount / missingCount / sample`。
+
+> 调查记录：[更新包哈希不符](docs/cases/2026-10-30-update-manifest-hash-drift.md)
+
+
 ## [0.7.10] - 2026-10-30
 
 ### 新增（语音页网盘离线包入口）

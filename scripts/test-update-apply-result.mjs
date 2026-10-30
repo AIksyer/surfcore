@@ -22,7 +22,7 @@ function makeTarget(name, version = '0.6.22', { withMeta = false } = {}) {
   return dir;
 }
 
-function makeZip({ withManifest = true, extraMissing = [] } = {}) {
+function makeZip({ withManifest = true, extraMissing = [], corrupt = [] } = {}) {
   const src = path.join(base, 'zip-src', 'surfcore-main');
   fs.rmSync(path.join(base, 'zip-src'), { recursive: true, force: true });
   fs.mkdirSync(path.join(src, 'plugins', 'surfcore'), { recursive: true });
@@ -40,6 +40,7 @@ function makeZip({ withManifest = true, extraMissing = [] } = {}) {
     walk(src);
     fs.mkdirSync(path.join(src, 'release'), { recursive: true });
     for (const rel of extraMissing) files[rel] = '0'.repeat(64);
+    for (const rel of corrupt) if (files[rel]) files[rel] = 'f'.repeat(64);
     fs.writeFileSync(path.join(src, 'release', 'install-manifest.json'), JSON.stringify({ schemaVersion: 1, version: '0.7.0', files }));
   }
   const zip = path.join(base, 'pkg.zip');
@@ -170,6 +171,26 @@ try {
       ok(r.updated === 0, '暂存：updated=0（不算已更新）', String(r.updated));
       ok(r.pendingRestart === 1, '暂存：pendingRestart=1');
       ok(fs.existsSync(path.join(dir, '.state', 'updates-pending.json')), '暂存：pending 文件已写');
+    } finally { restore(); delete process.env.SURFCORE_UPDATE_NO_SPAWN; }
+  }
+
+  // 3.4) 清单哈希与包内内容不符（发布包自身不一致）→ 确定性失败，别让用户反复点
+  {
+    const ZIP_BAD_HASH = makeZip({ corrupt: ['package.json'] });
+    const dir = makeTarget('bad-hash', '0.6.22', { withMeta: true });
+    const svc = mkService(dir);
+    const restore = stubFetch(async (u) => (u.includes('/archive/') ? new Response(ZIP_BAD_HASH, { status: 200 }) : undefined));
+    process.env.SURFCORE_UPDATE_NO_SPAWN = '1';
+    try {
+      await svc.check({ fetch: true });
+      const r = await svc.apply(['surfcore']);
+      const row = r.results[0];
+      ok(row.ok === false && row.code === 'verify.staging-mismatch', '哈希不符：code=verify.staging-mismatch', JSON.stringify(row));
+      ok(row.deterministic === true, '哈希不符：标为确定性失败（重试无效）', String(row.deterministic));
+      ok(/\d+ 个文件哈希不符/.test(String(row.reason)), '哈希不符：原因带数量', String(row.reason));
+      ok(String(row.hint).includes('手动下载'), '哈希不符：建议手动下载', String(row.hint));
+      const la = svc.status().lastApply;
+      ok(la?.deterministic === true && Number(la?.mismatchCount) >= 1, '常驻失败状态带 mismatchCount', JSON.stringify(la));
     } finally { restore(); delete process.env.SURFCORE_UPDATE_NO_SPAWN; }
   }
 

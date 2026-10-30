@@ -1272,9 +1272,12 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
       if (stagingCheck.bad.length) {
         return fail({
           ok: false, status: 'failed', stage: 'verify', code: 'verify.staging-mismatch',
-          reason: `安装包与清单不一致（${stagingCheck.bad.join('、')}…）`,
-          hint: '包可能损坏或被替换：重新下载；持续失败请手动下载',
-          diagnostics: { checked: stagingCheck.checked, mismatch: stagingCheck.bad.length, missing: stagingCheck.missing.length },
+          reason: `发布包与它自带的清单不一致：${stagingCheck.bad.length} 个文件哈希不符（${stagingCheck.bad.join('、')}…）`
+            + (stagingCheck.missing.length ? `，另有 ${stagingCheck.missing.length} 个缺失` : ''),
+          // 这是发布侧问题（重试必然同样结果），不是本地损坏：别让用户反复下载
+          hint: '这个版本的发布包自身不一致，自动更新无法完成：请到 Release 页手动下载该版本覆盖；这是发布流程问题，重试无效',
+          deterministic: true,
+          diagnostics: { checked: stagingCheck.checked, mismatch: stagingCheck.bad.length, missing: stagingCheck.missing.length, sample: stagingCheck.bad.slice(0, 5) },
         });
       }
       let priorFiles = null;
@@ -1492,6 +1495,10 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
           component: failedNow[0].id,
           reason: failedNow[0].reason ?? failedNow[0].error ?? '更新失败',
           hint: failedNow[0].hint ?? '',
+          deterministic: failedNow[0].deterministic === true,
+          mismatchCount: failedNow[0].diagnostics?.mismatch,
+          missingCount: failedNow[0].diagnostics?.missing,
+          sample: failedNow[0].diagnostics?.sample,
           at: new Date().toISOString(),
         }
         : null;
