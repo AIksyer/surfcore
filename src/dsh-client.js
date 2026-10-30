@@ -474,6 +474,25 @@ export class NodeApiClient extends AbstractApiClient {
   }
 
   /**
+   * 只取消当前 turn，不清 inbox、不归档。
+   * 回合熔断用这个；stopSessionWork 会清队列，不适合“只止血”。
+   */
+  async cancelTurn(sessionId, { timeoutMs = 8000 } = {}) {
+    if (typeof sessionId !== 'string' || !sessionId) throw new Error('sessionId is required');
+    const sig = AbortSignal.timeout(timeoutMs);
+    try {
+      const response = await this.callUnary('session/cancel', { sessionId }, sig);
+      if (!response.result?.ok && response.result?.error?.code !== 'session/not-found') {
+        unwrap(response, 'session/cancel');
+      }
+      return { ok: true };
+    } catch (error) {
+      if (String(error?.message ?? error).includes('session/not-found')) return { ok: true, gone: true };
+      throw error;
+    }
+  }
+
+  /**
    * 读取一个会话的待处理 inbox 项（退役/重置前要清掉的队列）。
    *
    * 两条路，都解析同一份 `inbox` 投影（见 {@link inboxItemsOfProjections}）：

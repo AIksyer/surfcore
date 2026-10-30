@@ -62,6 +62,8 @@ import {
 import { isOwnerOnlyFrame, canConsumePending, buildQuestionAnswers } from './question-answers.js';
 import { createOwnerAudit } from './owner-audit.js';
 import { createTokenLedger } from './token-ledger.js';
+import { createTurnGuard } from './turn-guard.js';
+import { createGateEventStore } from './gate-events.js';
 import { evaluateWakeBudget, evaluateOutbound, localDayStart } from './token-guard.js';
 import {
   blockMessage, evaluateBudget, localDayKey, readBudget, readDailyUsage,
@@ -1680,6 +1682,13 @@ async function main() {
   hardenStateDirAcl();
   acquireLock();
   loadState();
+
+  // 闸门事件中心：只记录“发生了什么 + 级别”；具体 UI 通知由插件读同一份文件。
+  const gateEvents = createGateEventStore({ dir: SURFCORE_DIR, log: (...args) => log(...args) });
+  const turnGuard = createTurnGuard({
+    maxSteps: cfg.socialV2?.turnGuard?.maxSteps ?? 40,
+    maxRepeatedErrors: cfg.socialV2?.turnGuard?.maxRepeatedErrors ?? 3,
+  });
 
   // ── 目的机制运行时（主动找主人）─────────────────────────────────────────
   // 只持久化「排程 + 心里惦记的事 + 最近说过什么」；在途回合放内存，重启后由
@@ -14490,6 +14499,100 @@ async function main() {
     return { collector, ended };
   }
 
+  // ── 回合安全控制器（L3 止血）─────────────────────────────────────────────
+  // 只做三件事：步数、同一工具错误重复、回合内每日额度。
+  // 单轮费用上限还没接价格表；先不做“看起来有、实际不准”的假上限。
+  let lastTurnBudgetProbeAt = 0;
+
+  function turnBudgetHits() {
+    if (Date.now() - lastTurnBudgetProbeAt < 5000) return [];
+    lastTurnBudgetProbeAt = Date.now();
+    try {
+      const usage = bridgeDailyUsage();
+      const limits = bridgeBudgetLimits();
+      const result = evaluateBudget(usage, limits, { scopes: ['qq', 'total'] });
+      return result.blocked ? result.hits ?? [] : [];
+    } catch (error) {
+      log('[turn-guard] 额度检查失败：', String(error?.message ?? error).slice(0, 160));
+      return [];
+    }
+  }
+
+  function recordTurnStop(sessionId, key, stop) {
+    if (!stop) return;
+    const code = String(stop.code ?? 'TURN_ABORTED');
+    const kind = code === 'TURN_BUDGET_EXHAUSTED' ? 'cost' : 'fault';
+    const impact = code === 'TURN_BUDGET_EXHAUSTED'
+      ? '回合进行中每日额度已耗尽；继续调用会继续产生费用。'
+      : code === 'TURN_REPEATED_TOOL_ERROR'
+        ? '同一工具和错误反复出现，模型可能陷入重试循环；本轮已停止。'
+        : '单轮工具步数超过上限，任务可能已失控；本轮已停止。';
+    gateEvents.record({
+      gate: 'turn-guard',
+      kind,
+      event: code,
+      action: 'stopped',
+      subject: { session: sessionId, key },
+      reason: { code, message: stop.reason },
+      impact,
+      recommendation: '检查 QQ 预设/第三方插件与额度设置；修复后再开新回合。',
+      confidence: 'confirmed',
+      dedupeKey: `turn-guard:${code}:${sessionId}`,
+      evidence: stop.evidence ?? {},
+    });
+    log(`⛔ 回合止血 ${key || sessionId}：${stop.reason}`);
+    void (async () => {
+      try { await api.cancelTurn(sessionId); }
+      catch (error) { log(`⚠️ 取消回合失败 ${key || sessionId}：${error?.message ?? error}`); }
+      if (!key) return;
+      try {
+        await sendToQQ(key, `【SurfCore】本轮已停止，避免继续消耗：${stop.reason}。修复后回复「继续」可开新回合；详情见设置 → 诊断。`);
+      } catch (error) {
+        log(`⚠️ 回合止血通知发送失败 ${key}：${error?.message ?? error}`);
+      }
+    })();
+  }
+
+  /** 处理一条会话事件；返回 true 表示本回合已停止，调用方应跳过后续处理。 */
+  function guardTurnEvent(sessionId, key, event) {
+    if (!sessionId || !key) return false;
+    const type = event?.type;
+    if (type === 'turn/start') {
+      turnGuard.begin(sessionId, key);
+      return false;
+    }
+    if (type === 'turn/end') {
+      turnGuard.end(sessionId);
+      return false;
+    }
+
+    const state = turnGuard.get(sessionId);
+    if (!state) return false;
+
+    let stop = null;
+    if (type === 'tool/call') {
+      stop = turnGuard.noteStep(sessionId);
+    } else if (type === 'tool/result') {
+      const callId = event.data?.message?.source?.callId;
+      const toolName = callId != null ? (toolCallNames.get(sessionId)?.get(String(callId)) ?? '') : '';
+      const resultBlock = event.data?.message?.content?.[0];
+      const resultError = event.data?.message?.isError === true || resultBlock?.isError === true;
+      if (resultError) {
+        const errorText = String(resultBlock?.text ?? resultBlock?.error ?? event.data?.message?.error ?? '');
+        stop = turnGuard.noteToolError(sessionId, toolName, errorText);
+      }
+    }
+    if (!stop && (type === 'assistant/message' || type === 'tool/result')) {
+      const hits = turnBudgetHits();
+      if (hits.length) stop = turnGuard.noteBudgetExhausted(sessionId, hits);
+    }
+    if (stop) {
+      recordTurnStop(sessionId, key, stop);
+      return true;
+    }
+    return false;
+  }
+
   async function pumpMux() {
     // 事件流重连退避：DSH 侧流被立刻关闭时（例如版本不兼容，见 issue #34），
     // 固定 3 秒重连会以每分钟 20 行的速度刷屏，真正有用的错误反而被淹没。
@@ -14513,6 +14616,7 @@ async function main() {
             // 花掉的钱都是真的，都必须入账（归属由 resolveKey 决定）。
             recordSessionUsage(frame.sessionId, frame.event);
             const key = reverse.get(frame.sessionId);
+            if (key && guardTurnEvent(frame.sessionId, key, frame.event)) continue;
             if (!key) {
               // 黑话学习会话：只收集 turn，不发送 QQ，并唤醒等待中的学习任务。
               if (learnerSessions.has(frame.sessionId)) {

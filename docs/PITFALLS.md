@@ -2885,3 +2885,47 @@ Node 读文件后删除；不再解析 stdout。所有「浏览…」共用此�
 - **根因**：`ADMIN_MID_RE` 限 4~15 位，超出被 `normalizeAdmin` 静默清空；前端无提示、保存无报错。
 - **修法**（0.7.18）：放宽到 4~20 位；非法值返回 `admin.mid-invalid` + hint；输入框提示位数；
   另加「核查 UID 与昵称」（查 B站 名片比对真实昵称）。
+
+## #88（2026-10-30）第三方全局工具被 QQ 白名单拒 → 模型反复重试
+
+**现象**：用户装了第三方 `billion-context`（0.1.209），它把
+`compress/decompress/search_context/acp_status/acp_cache` 注入 DSH 全局工具层；
+QQ 会话的 `qq-tool-restrict` 不认识这些工具，执行期拒绝。模型把拒绝当普通工具错误，
+197 次 compress / 214 步 / 46 分钟，约 ¥20。
+
+**根因**：
+1. SurfCore 的工具有效边界是 `qq-tool-restrict` 的精确白名单，第三方插件没有统一的工具声明；
+2. 工具被拒只返回字符串，没有“停止/熔断”语义；
+3. 每日 token 额度只在唤醒前检查，回合内不生效；
+4. `billion-context` 同时把 DSH `compaction-basic` 的 `auto` 关掉，QQ 会话失去两套压缩。
+
+**修法（本批）**：新增只读「插件冲突体检」，优先覆盖：
+`COMPAT_TOOL_DENIED` / `COMPAT_COMPACTION_CONFLICT` / `COMPAT_TOOL_INVENTORY_UNKNOWN`；
+未知插件必须显示 `unknown`，不能冒充已检查。入口在设置→概览「检查更新」旁。
+
+**未修（下一批）**：回合级熔断（重复错误/步数/单轮费用/回合内额度）与端口/进程检查；
+本次体检只能提前发现，不能替代运行时止损。
+
+**验证**：`node scripts/test-plugin-compat.mjs`；`npm run test:audit`。
+
+## #89（2026-10-30）每日额度管不住正在跑的回合 → 工具拒绝循环烧钱
+
+**现象**：`compress` 被 QQ 白名单拒，模型在同一个 turn 里试了 197 次；
+每日 token 额度只在唤醒前检查，回合开始后没有任何步数/重复错误/额度硬闸。
+
+**根因**：
+1. `tokenGuardWakeBlock` 只在唤醒前检查 `evaluateBudget`；send guard 只查防爆破；
+2. `qq-tool-restrict` 的拒绝只是普通工具错误，没有“停止”语义；
+3. bridge 的 `trackTurnEvent` 只收最终文本，不计数；
+4. 没有 cancel-only 接口用于“只止血、不清队列”。
+
+**修法**：
+- `src/turn-guard.js`：maxSteps 40 / 同 tool+error 3 次 / 回合内额度；
+- `bridge.pumpMux` 接 `guardTurnEvent`，命中后 `api.cancelTurn()` + 直接 QQ 通知；
+- `src/gate-events.js`：L0–L3 事件中心、去重 ack、2MB 轮转；
+- 插件 `/gate-events` + 概览「安全提醒」卡/L2/L3 弹窗。
+
+**未修**：单轮费用上限（价格表覆盖不全）、pre-call 阻断、L0/L1 全量生产者接入。
+
+**验证**：`node scripts/test-gate-events.mjs`；`npm run test:audit` 88/88；
+`plugins/surfcore npm test`。

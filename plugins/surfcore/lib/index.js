@@ -66,6 +66,8 @@ import { ExtensionHost } from './extensions.js';
 import { isLoopbackReq, json, readBody, sameOrigin } from './http-guard.js';
 import { startScheduler } from './scheduler.js';
 import { createTokenBudgetService } from './token-budget.js';
+import { scanPluginCompatibility } from './compat.js';
+import { createGateEventStore } from '../../../src/gate-events.js';
 import { createPetService, detectElectronPath, installElectronRuntime, ELECTRON_VERSION, electronDownloadUrl } from './pet.js';
 import { createPetChatService } from './pet-chat.js';
 import { createPetPurposeService } from './pet-purpose.js';
@@ -217,6 +219,8 @@ export function apply(ctx) {
     getQqConfig: () => readQqConfig().config,
     log: (message) => pluginLog(message),
   });
+  // 闸门事件中心：桥接负责写，插件负责展示/确认；同一份文件、同一套分级。
+  const gateEvents = createGateEventStore({ dir: STATE_DIR, log: (message) => pluginLog(message) });
   // ── 桌宠（独立栏目，默认不安装；用户自己安装才生效）────────────────────
   const petService = createPetService({ stateDir: STATE_DIR, pluginLog, getSubprocess: () => ctx.get('subprocess') });
   // 桌宠对话与「目的机制」的桌宠载体：和 QQ / B站 共用当前角色的人格卡、记忆卡、目的状态。
@@ -2918,6 +2922,56 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$
     if (pathname === `${API_PREFIX}/mode`) { await handleMode(req, res); return; }
     if (pathname === `${API_PREFIX}/extensions`) { await handleExtensions(req, res); return; }
     if (pathname === `${API_PREFIX}/platforms`) { await handlePlatforms(req, res); return; }
+    if (pathname === `${API_PREFIX}/compat/scan`) {
+      try {
+        let version = '';
+        try { version = String(JSON.parse(fs.readFileSync(path.join(QQBOT_ROOT, 'package.json'), 'utf8')).version ?? ''); } catch {}
+        const report = scanPluginCompatibility({ surfcoreVersion: version });
+        // 体检结果进闸门事件中心：只记 blocker/high，unknown/info 留在体检报告里，避免噪音。
+        for (const issue of report.issues ?? []) {
+          if (issue.severity !== 'blocker' && issue.severity !== 'high') continue;
+          gateEvents.record({
+            gate: 'plugin-compat',
+            kind: 'compat',
+            event: issue.code,
+            action: 'blocked',
+            subject: { bundle: issue.evidence?.bundle ?? '', profile: report.profile?.name ?? '' },
+            reason: { code: issue.code, message: issue.title },
+            impact: issue.impact,
+            recommendation: issue.recommendation,
+            confidence: issue.confidence,
+            dedupeKey: `compat:${issue.code}:${issue.evidence?.bundle ?? ''}`,
+            evidence: issue.evidence ?? {},
+          });
+        }
+        json(res, 200, report);
+      } catch (error) {
+        json(res, 500, {
+          ok: false,
+          code: 'COMPAT_SCAN_FAILED',
+          error: `插件体检失败：${String(error?.message ?? error)}`,
+          hint: '先确认 DSH_HOME/profiles 可读；如果刚升级过 DSH，重启 DSH 后再试。',
+        });
+      }
+      return;
+    }
+    if (pathname === `${API_PREFIX}/gate-events`) {
+      if (req.method === 'GET') {
+        const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 50));
+        const level = String(url.searchParams.get('level') ?? '').trim();
+        const includeAcked = url.searchParams.get('includeAcked') !== '0';
+        json(res, 200, { ok: true, ...gateEvents.list({ limit, level, includeAcked }), gateEvents: true });
+        return;
+      }
+      if (req.method === 'POST') {
+        const body = JSON.parse(await readBody(req) || '{}');
+        const acked = gateEvents.ack(Array.isArray(body.ids) ? body.ids : [], body.action === 'ack-all' || body.all === true);
+        json(res, 200, { ok: true, ...acked, ...gateEvents.list({ limit: 50, includeAcked: false }) });
+        return;
+      }
+      json(res, 405, { ok: false, code: 'GATE_EVENTS_METHOD', error: '只支持 GET / POST', hint: '刷新页面后重试' });
+      return;
+    }
     if (pathname === `${API_PREFIX}/diagnostics`) { await handleDiagnostics(req, res); return; }
     if (pathname === `${API_PREFIX}/bridge`) { await handleBridge(req, res); return; }
     if (pathname.startsWith(`${API_PREFIX}/purpose`)) { await handlePurpose(req, res, url); return; }

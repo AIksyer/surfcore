@@ -6,6 +6,8 @@
 
 | 日期 | 案例 | 一句话 | 版本 |
 | --- | --- | --- | --- |
+| 2026-10-30 | [闸门事件中心 + 单轮 L3 止血](2026-10-30-gate-events-turn-guard.md) | 重复 compress / 步数 / 回合内额度到顶 → cancel-only + 直接通知；L0-L3 事件中心 | 待发布 |
+| 2026-10-30 | [插件冲突体检](2026-10-30-plugin-compat-check.md) | 第三方 compress 被 QQ 白名单拒 → 只读体检报工具/压缩冲突；未知插件标 unknown | 待发布 |
 | 2026-10-29 | [设置称呼「弥叭」仍叫管理员](2026-10-29-admin-display-name-projection.md) | QQ 投影只写 ownerQQ，桥接兜底把「管理员」当称呼 → 完整投影 + 空串兜底 | 待发布 |
 | 2026-10-29 | [原生浏览选中文目录后导入报不存在](2026-10-29-browse-chinese-path.md) | PowerShell stdout GBK 被 Node 当 UTF-8 → 路径乱码；改 UTF-8 临时文件 | 待发布 |
 | 2026-10-29 | [云端参考音频“下载”没反应](2026-10-29-cloud-sample-download.md) | 接口 200 但 `<a target=_blank>` 被宿主拦 → fetch+Blob，加「打开所在目录」 | 待发布 |

@@ -4,6 +4,41 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.7.19] - 2026-10-30
+
+### 新增（插件冲突体检）
+
+- 设置 → 概览「检查更新」旁新增「插件体检」：只读扫描 profile 的 bundles / `cordis.patch.yml` /
+  已安装包 / 已知第三方插件 / SurfCore QQ 工具策略；
+- 优先发现：第三方工具被 QQ guard 拒绝（例如本地执行类工具；`billion-context` 的 5 个上下文工具本版已放行）、
+  第三方接管压缩但 `compaction-basic auto=false`、插件未声明工具清单（`unknown`）；
+- 报告带等级、证据、影响、建议、覆盖范围与未检查项，可复制 JSON；
+- 不启动/停止服务、不改白名单、不禁用插件；未知插件明确标 `unknown`，不冒充“兼容”。
+
+### 新增（闸门事件中心 + 单轮 L3 止血）
+
+- `src/gate-events.js`：L0–L3 统一分级、去重 ack、脱敏、2MB 轮转；
+- `src/turn-guard.js` + bridge `guardTurnEvent`：单轮工具步数 40、同一 tool+error 3 次、
+  回合内每日额度耗尽 → **cancel-only** 停止 + 直接 QQ 通知，不再等模型自己放弃；
+- 设置 → 概览新增「安全提醒」卡片；L2/L3 弹窗，确认后不重复弹；
+- 插件 `/gate-events` 读写；兼容性体检的 blocker/high 自动进事件中心；
+- **未做**单轮费用上限（价格表未覆盖全部模型）、pre-call 阻断、L0/L1 全量生产者接入。
+
+### 变更（QQ 工具白名单）
+
+- 放行 `billion-context` 注入的 5 个上下文工具：`compress` / `decompress` / `search_context` /
+  `acp_status` / `acp_cache`。不放行时模型会反复重试被拒工具（实测单回合 197 次），
+  而 QQ 会话失去上下文压缩更容易爆上下文；这 5 个只操作上下文，不含本地执行/网络写操作。
+
+
+## 计划
+
+- 把 SurfCore 打成 npm 包 + DSH bundle，支持 `dsh plugin add` 一条命令安装
+- 语音包的"离线音频转音频"（RVC）接口
+- 更新面板显示远端版本号（目前只有提交数/版本清单）
+- 插件冲突体检 P1：端口/进程归属、运行时工具拒绝/重复回复、回合熔断
+
+
 ## [0.7.18] - 2026-10-30
 
 ### 新增（B站 扫码登录可见/可核查；管理员 UID 支持长号）
@@ -914,14 +949,6 @@
 - **关掉 B站 后分享定时器仍在跑**：分享调度只在桥接启动时读 `biliBridge.enabled`，设置页的
   「启动B站」关不掉它；现在每次触发前按 30 秒缓存读统一配置的 `platforms.start.bili`。
 - **分享历史写失败被静默吞掉**：`saveHistory()` 的 `catch {}` 改为打日志——写不进去会让去重永久失效。
-
-## [Unreleased]
-
-### 计划
-
-- 把 SurfCore 打成 npm 包 + DSH bundle，支持 `dsh plugin add` 一条命令安装
-- 语音包的"离线音频转音频"（RVC）接口
-- 更新面板显示远端版本号（目前只有提交数/版本清单）
 
 ## [0.1.0] - 2026-10-26
 

@@ -5,6 +5,70 @@
 
 ---
 
+## 快照：2026-10-30 14:15–14:50（对齐 v0.7.18 现状）
+
+### 当前事实
+
+- **HEAD**：`3a82618 feat(guard): 闸门事件中心与单轮 L3 止血`（其后只有发布队列文档提交）
+- **package.json version**：`0.7.18`（编辑会话未改版本）
+- **工作区**：干净（`git status --porcelain` 无输出）
+- 本会话上一段（10-29）的离线导入、中文路径、管理员称呼修复均已进 v0.7.0–v0.7.4。
+
+### v0.7.4 → v0.7.18 发布线
+
+| 版本 | 内容 |
+| --- | --- |
+| 0.7.5–0.7.7 | 更新提示 blocked/自愈、语音三闸门、设置不回弹、安装证据校准 |
+| 0.7.8–0.7.9 | toast 契约修复、zip 更新清单只列 git 跟踪文件、交集校验、tag 归档 |
+| 0.7.10 | 语音页网盘离线包入口（`打开网盘下载（提取码 sxUZ）`） |
+| 0.7.11–0.7.12 | 安装清单改从 git blob 算；发布脚本从 git 对象取内容（修 CRLF 污染） |
+| 0.7.13 | 桌宠安装表单真正提交 + Windows 盘符校验 |
+| 0.7.14 | SnowLuma 手动指定已安装位置 |
+| 0.7.15 | 云端语音失败分类、换路兜底、`state/voice-errors.log`、三步自检 |
+| 0.7.16 | 更新后必须重启 DSH 的提示 |
+| 0.7.17 | 版本发现补 api tags、codeload/镜像回退、失败退避 |
+| 0.7.18 | B站 扫码登录可见/可核查、管理员 UID 4~20 位、非法值不再静默清空 |
+
+### 本次新增（2026-10-30 16:00）
+
+- **插件冲突体检**：设置 → 概览「检查更新」旁新增「插件体检」按钮；
+  `plugins/surfcore/lib/compat.js` 只读扫描 profile bundles / `cordis.patch.yml` / 已安装包 /
+  已知第三方规则 / QQ 工具白名单，输出 `COMPAT_TOOL_DENIED`、`COMPAT_COMPACTION_CONFLICT`、
+  `COMPAT_TOOL_INVENTORY_UNKNOWN`；未知插件标 `unknown`，不冒充兼容。
+- 已知规则在 `plugins/surfcore/lib/compat-rules.js`；第三方可用 `surfcore.compat.json` 声明工具。
+- **闸门事件中心 + 单轮 L3 止血**：`src/gate-events.js`（L0–L3/ack/轮转）、
+  `src/turn-guard.js`（40 步/同 tool+error 3 次/回合内额度）、bridge `guardTurnEvent`
+  → `cancelTurn` + 直接 QQ 通知；概览「安全提醒」卡，L2/L3 弹窗。
+- 本版**未做**单轮费用上限、端口/进程归属、L0/L1 全量生产者接入；报告/文档已标。
+
+### 已验证（本会话，2026-10-30）
+
+- `npm run test:audit` → **88/88**（新增 test-plugin-compat / test-gate-events）；
+- `node scripts/test-plugin-compat.mjs` / `node scripts/test-gate-events.mjs` → 通过（工具拒绝、压缩接管、未知插件、L0–L3、步数/重复错误/额度止血）。
+- `plugins/surfcore npm test` → **全绿**；
+- 本次新增 `test-plugin-compat` / `test-gate-events`；并修了 3 个 0.7.5 blocked 语义后的过时夹具（`test-updates-version/pending/voice`）。
+
+### 没验证 / 当前待办
+
+- **v0.7.18 的 B站 扫码/登录核查/长 UID 没有在本会话逐项实机复测**；以发布说明和发布会话验证为准。
+- **插件体检按钮/L2-L3 安全弹窗还没有在真实设置页点过**；`scanPluginCompatibility` 已用真实 desktop profile 跑过，
+  UI 弹窗/复制/重新体检/真实回合 cancel 需重启 DSH 后手测。
+- **语音离线包导入 UI 仍没在真实设置页点过**（确认框/错误弹窗/删源/删备份）；真实 7.9G 导入已跑通。
+- 语音包许可仍未定：piper GPL、huayan 数据集、age12 微调权重；候选包在 `D:\surfcore-poc\release\`，
+  **不要当公开包直接上传**。
+- 0.7.18 的 `PERMISSIONS.md` 里仍有若干权限项标记“待补程序断言”（上一快照遗留）。
+- `docs/RELEASE-QUEUE.md` 顶部仍留着 0.7.4 之前的历史批次，**没有逐条改成“已发布”**；
+  接手时以 `git log` / `CHANGELOG` / `package.json` 为准，别直接照抄队列标题。
+- 0.7.1–0.7.8 的 zip 用户无法自动升到 0.7.9+，需手动覆盖一次（CHANGELOG 0.7.9 已记录）。
+
+### 下一步建议
+
+1. 先等用户给具体新需求；编辑会话不改 version/tag/推公开仓库。
+2. 若继续语音包：先补 `PERMISSIONS.md` 的权限断言，再决定 piper/huayan/微调权重许可。
+3. 若继续更新/发布链路：按 AGENTS §1.8 三道门禁（git 对象清单 → git 对象发布 → 下载真实归档核对）。
+
+---
+
 ## 快照：2026-10-29 17:00–17:50（语音包离线导入 + local/cloud 候选包）
 
 ### 用户要求

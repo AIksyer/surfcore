@@ -7,6 +7,9 @@ import { inspectComponent, inspectVersionComponent } from '../lib/updates.js';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sfc-upd-ver-'));
 fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ version: '0.4.6' }));
+// 0.7.5 起：没有安装证据的目录会被 blocked（不能自动覆盖）；这个用例要测
+// “有证据 + 有新版 → 给下载地址”，所以补一份安装记录。
+fs.writeFileSync(path.join(dir, '.installed-meta.json'), JSON.stringify({ version: '0.4.6' }));
 
 const realFetch = global.fetch;
 

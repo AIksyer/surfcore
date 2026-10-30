@@ -1369,6 +1369,79 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
                 : (working ? "更新中…" : `立即更新（${selected.size}）`)))));
     }
 
+    // 插件冲突体检报告：只读结果；明确写出“未覆盖项”，避免把“没查到”当“兼容”。
+    function CompatModal({ report, error, onClose, onRetry, busy, toast }) {
+      const issues = Array.isArray(report?.issues) ? report.issues : [];
+      const sevLabel = { blocker: "阻断", high: "高风险", warn: "警告", info: "信息" };
+      const confLabel = { confirmed: "已确认", inferred: "按已知规则推断", unknown: "未覆盖/未知" };
+      const copy = async () => {
+        try {
+          await navigator.clipboard.writeText(JSON.stringify(report ?? error, null, 2));
+          toast?.("✓ 报告已复制");
+        } catch (e) {
+          toast?.(`✗ 复制失败：${e.message}；请截图报告`);
+        }
+      };
+      const issueRows = issues.map((it, i) => h("div", {
+        key: `${it.code}-${i}`,
+        style: { border: "1px solid rgba(127,127,127,.25)", borderRadius: "8px", padding: "9px 10px", marginTop: "8px" },
+      },
+        h("div", { style: { display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" } },
+          h("b", null, it.title || it.code),
+          h("span", { className: "qbw-badge " + (it.severity === "blocker" || it.severity === "high" ? "bad" : "warn") },
+            `${sevLabel[it.severity] ?? it.severity} · ${confLabel[it.confidence] ?? it.confidence}`),
+          h("span", { className: "qbw-hint" }, it.code)),
+        h("div", { className: "qbw-hint", style: { marginTop: "3px" } }, `影响：${it.impact || "未说明"}`),
+        h("div", { className: "qbw-hint", style: { marginTop: "2px" } }, `建议：${it.recommendation || "未说明"}`),
+        it.evidence ? h("details", { style: { marginTop: "4px" } },
+          h("summary", { className: "qbw-hint" }, "证据"),
+          h("pre", { className: "qbw-out", style: { maxHeight: "150px", overflow: "auto", marginTop: "3px", whiteSpace: "pre-wrap", wordBreak: "break-all" } },
+            JSON.stringify(it.evidence, null, 2))) : null));
+      const unknown = report?.coverage?.unknownBundles ?? [];
+      return h("div", { className: "qbw-modal-backdrop", onClick: (e) => { if (e.target === e.currentTarget && !busy) onClose?.(); } },
+        h("div", { className: "qbw-modal", style: { width: "min(720px, 94vw)", maxHeight: "86vh", overflow: "auto" } },
+          h("h3", null, error ? "插件体检失败" : "插件冲突体检"),
+          error ? h("div", null,
+            h("div", { className: "qbw-err" }, `${error.code ? `（${error.code}）` : ""}${error.message}`),
+            h("div", { className: "qbw-hint", style: { marginTop: "6px" } }, error.hint || "确认 DSH 已安装、profile 可读后重试。"))
+            : h("div", null,
+              h("div", { className: "qbw-hint" },
+                report?.ok
+                  ? "未发现已知冲突。注意：这不等于“兼容”，未覆盖项见下。"
+                  : "发现需要处理的风险；报告只读，不会自动改配置。"),
+              h("div", { className: "qbw-hint", style: { marginTop: "4px" } },
+                `profile：${report?.profile?.name ?? "未知"} · SurfCore ${report?.versions?.surfcore ?? "?"} · DSH ${report?.versions?.dsh ?? "未知"} · ${report?.scannedAt ?? ""}`),
+              h("div", { className: "qbw-hint", style: { marginTop: "4px" } },
+                `已看：${report?.coverage?.packages ?? 0} 个包 / ${report?.coverage?.bundles?.length ?? 0} 个 bundle；已知工具 ${report?.coverage?.toolsKnown?.length ?? 0} 个`),
+              unknown.length ? h("div", { className: "qbw-hint", style: { color: "#b9770e", marginTop: "4px" } },
+                `未枚举工具的插件 ${unknown.length} 个：${unknown.map((x) => x.name).join("、")}`) : null,
+              (report?.coverage?.unchecked ?? []).length
+                ? h("div", { className: "qbw-hint", style: { marginTop: "2px" } }, `未检查：${report.coverage.unchecked.join("、")}`)
+                : null,
+              h("div", { style: { marginTop: "8px" } }, issues.length ? issueRows : h("div", { className: "qbw-hint" }, "没有已知问题。"))),
+          h("div", { className: "qbw-actions", style: { marginTop: "12px" } },
+            h(Btn, { kind: "qbw-btn2", onClick: copy, disabled: !report && !error }, "复制报告"),
+            h(Btn, { kind: "qbw-btn2", onClick: onRetry, disabled: !!busy }, busy === "compat" ? "体检中…" : "重新体检"),
+            h(Btn, { onClick: onClose, disabled: !!busy }, "关闭"))));
+    }
+
+    // 闸门 L2/L3 弹窗：必须说明“哪个门、挡了什么、影响、下一步”，不能只弹“已拒绝”。
+    function GateAlertModal({ event, onClose, onAck }) {
+      if (!event) return null;
+      const urgent = event.level === "L3";
+      return h("div", { className: "qbw-modal-backdrop", onClick: (e) => { if (e.target === e.currentTarget) onClose?.(); } },
+        h("div", { className: "qbw-modal", style: { width: "min(620px, 94vw)", maxHeight: "86vh", overflow: "auto" } },
+          h("h3", null, urgent ? "安全/成本警报（L3）" : "需要处理的安全提醒（L2）"),
+          h("div", { className: "qbw-hint" }, `${event.level} · ${event.gate} · ${event.event}`),
+          h("p", { style: { marginTop: "8px" } }, event.impact || event.reason?.message || "闸门触发了拦截。"),
+          event.reason?.message ? h("div", { className: "qbw-hint" }, `原因：${event.reason.message}`) : null,
+          event.recommendation ? h("div", { className: "qbw-hint", style: { marginTop: "4px" } }, `建议：${event.recommendation}`) : null,
+          h("div", { className: "qbw-hint", style: { marginTop: "4px" } }, "这条记录会保留；确认后不再自动弹同一事件。"),
+          h("div", { className: "qbw-actions", style: { marginTop: "12px" } },
+            h(Btn, { onClick: () => onAck?.(event.id) }, urgent ? "确认并关闭" : "确认"),
+            h(Btn, { kind: "qbw-btn2", onClick: onClose }, "稍后"))));
+    }
+
     // 通用错误报告弹窗（AGENTS 1.7）：失败必须可见 + 给下一步。
     // 只在"用户必须知道并做个选择"的失败上用；普通提示仍用 toast。
     function ErrorModal({ title, message, hint, tried, actions = [], disabled, onClose }) {
@@ -1404,6 +1477,11 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
       // 检查在插件里做（git fetch，只读）；界面只负责展示与确认。
       const updates = overview?.updates ?? {};
       const [updateOpen, setUpdateOpen] = useState(false);
+      const [compat, setCompat] = useState(null);
+      const [compatError, setCompatError] = useState(null);
+      const [gateData, setGateData] = useState(null);
+      const [gateAlert, setGateAlert] = useState(null);
+      const dismissedGates = useRef(new Set());
       // 更新后必须重启 DSH：检查到更新、以及下载完成后都主动提示（只刷新页面不会应用）
       const [restartHint, setRestartHint] = useState(null);
       const [tokenDraft, setTokenDraft] = useState("");
@@ -1443,6 +1521,43 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
           toast(`✗ 检查更新失败：${e.message}`);
           return null;
         } finally { setBusy(""); }
+      };
+      // 插件冲突体检：只读扫描；结果必须带“未覆盖项”，不能把“没查到”说成“兼容”。
+      const runCompat = async () => {
+        setBusy("compat");
+        try {
+          const r = await api("/compat/scan");
+          setCompat(r);
+          setCompatError(null);
+        } catch (e) {
+          setCompat(null);
+          setCompatError({
+            message: String(e.message || e),
+            code: e.code || "",
+            hint: e.hint || "确认 DSH 已安装、DSH_HOME/profiles 可读；必要时重启 DSH 后重试。",
+          });
+        } finally { setBusy(""); }
+      };
+      // 闸门事件：L2/L3 才弹；L0/L1 只留在通知列表，不打断。
+      const loadGateEvents = useCallback(async () => {
+        try {
+          const r = await api("/gate-events?limit=30&includeAcked=0");
+          setGateData(r);
+          const top = (r.events ?? []).find((x) => (x.level === "L3" || x.level === "L2") && !dismissedGates.current.has(x.id));
+          if (top) setGateAlert(top);
+        } catch {}
+      }, []);
+      useEffect(() => {
+        loadGateEvents();
+        const timer = setInterval(loadGateEvents, 15000);
+        return () => clearInterval(timer);
+      }, [loadGateEvents]);
+      const ackGate = async (id) => {
+        try {
+          await api("/gate-events", { method: "POST", body: id ? { ids: [id] } : { all: true } });
+          setGateAlert(null);
+          await loadGateEvents();
+        } catch (e) { toast(`✗ 确认失败：${e.message}`); }
       };
       // pickedPath 为空 = 在常见位置里猜；点了「浏览…」就把用户选的路径传进去验证并保存。
       const detectSnowLuma = async (pickedPath = "") => {
@@ -1638,6 +1753,7 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
               : null,
             h("div", { className: "qbw-actions" },
               h(Btn, { onClick: () => checkUpdates(), disabled: !!busy }, busy === "updates" ? "检查中…" : "检查更新"),
+              h(Btn, { kind: "qbw-btn2", onClick: runCompat, disabled: !!busy }, busy === "compat" ? "体检中…" : "插件体检"),
               (updates.results ?? []).some((x) => x.status === "unknown" || x.status === "failed")
                 ? h(Btn, {
                   kind: "qbw-btn2",
@@ -1709,6 +1825,18 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
                 : null),
             h("div", { className: "qbw-hint", style: { marginTop: "4px" } },
               "只需要“读公开仓库”的权限；令牌只存在本机 config.json，不会上传，也不会出现在诊断信息里。")),
+          (gateData?.events ?? []).length
+            ? h("div", { className: "qbw-card" },
+              h("h4", null, "安全提醒 ", h("span", { className: "qbw-badge " + ((gateData?.counts?.L3 ?? 0) > 0 ? "bad" : "warn") },
+                `未确认 ${gateData?.counts?.unacked ?? 0} 条`)),
+              (gateData.events ?? []).slice(0, 6).map((ev) => h("div", { className: "qbw-kv", key: ev.id },
+                h("span", null, `${ev.level} · ${ev.gate}`),
+                h("span", null, `${ev.impact || ev.reason?.message || ev.event}${ev.ack ? "" : "（未确认）"}`))),
+              h("div", { className: "qbw-hint" }, "L0 静默、L1 仅记录；L2/L3 才弹窗。"),
+              h("div", { className: "qbw-actions", style: { marginTop: "6px" } },
+                h(Btn, { kind: "qbw-btn2", onClick: () => ackGate(null), disabled: !(gateData?.counts?.unacked > 0) }, "全部确认"),
+                h(Btn, { kind: "qbw-btn2", onClick: loadGateEvents }, "刷新")))
+            : null,
           h(AdvancedSettings, { note: "SnowLuma 安装 / 扩展与平台：装好后很少改" },
             h("div", { className: "qbw-card" },
               h("h4", null, "SnowLuma 安装"),
@@ -1783,6 +1911,19 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
           toast,
           onClose: () => setUpdateOpen(false),
           onDone: async () => { setUpdateOpen(false); await reload(); },
+        }) : null,
+        (compat || compatError) ? h(CompatModal, {
+          report: compat,
+          error: compatError,
+          busy,
+          toast,
+          onClose: () => { setCompat(null); setCompatError(null); },
+          onRetry: runCompat,
+        }) : null,
+        gateAlert ? h(GateAlertModal, {
+          event: gateAlert,
+          onClose: () => { if (gateAlert) dismissedGates.current.add(gateAlert.id); setGateAlert(null); },
+          onAck: ackGate,
         }) : null);
     }
 
