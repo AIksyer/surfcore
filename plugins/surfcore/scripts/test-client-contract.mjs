@@ -395,4 +395,12 @@ assert.ok(!/browseNative\("file",[^)]*filter:/.test(source), '不得把原始 fi
 
 
 
+// ── 更新后必须提示重启 DSH（2026-10-30 用户要求）──
+assert.ok(source.includes('restartHint'), '必须有重启提示状态');
+assert.ok(source.includes('更新已下载：重启 DSH 后生效'), '下载完成后要提示重启');
+assert.ok(source.includes('有可用更新：安装后需要重启 DSH'), '检查到更新后要提示安装需重启');
+assert.ok(source.includes('完全退出 DSH'), '提示要说明“完全退出”而不是刷新页面');
+assert.ok(/setRestartHint\(\{ staged: true/.test(source), '暂存成功后设置重启提示');
+assert.ok(source.includes('下载完成 ≠ 已更新'), '更新卡片要有常驻提示');
+
 console.log('client contract tests OK');

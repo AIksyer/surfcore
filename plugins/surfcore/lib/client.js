@@ -1271,6 +1271,8 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
             const parts = withVer.map((x) => `${x.name} v${x.installedVersion || "?"} → ${fmtV(x.latestVersion)}`);
             return `${parts.join("　")}；更新不会动 config.json 与记忆卡。`;
           })()),
+          h("p", { style: { fontSize: "12px", color: "#e6a23c", marginTop: "2px" } },
+            "⚠️ 下载/更新完成后需要完全退出 DSH 再打开才会生效；只刷新设置页不会应用。"),
           pending.length ? pending.map((item) => h("div", { key: item.id, style: { border: "1px solid rgba(127,127,127,.24)", borderRadius: "10px", padding: "10px 12px", margin: "0 0 8px" } },
             h("label", { style: { display: "flex", gap: "8px", alignItems: "center", fontWeight: 600 } },
               h("input", { type: "checkbox", checked: selected.has(item.id), onChange: () => toggle(item.id), disabled: working }),
@@ -1364,6 +1366,8 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
       // 检查在插件里做（git fetch，只读）；界面只负责展示与确认。
       const updates = overview?.updates ?? {};
       const [updateOpen, setUpdateOpen] = useState(false);
+      // 更新后必须重启 DSH：检查到更新、以及下载完成后都主动提示（只刷新页面不会应用）
+      const [restartHint, setRestartHint] = useState(null);
       const [tokenDraft, setTokenDraft] = useState("");
       const saveGithubToken = async (clear = false) => {
         setBusy("token");
@@ -1392,7 +1396,8 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
         try {
           const r = await api("/updates", { method: "POST", body: { action: "check" } });
           const n = r.pendingCount ?? 0;
-          toast(n ? `发现 ${n} 个组件有更新` : "已是最新");
+          toast(n ? `发现 ${n} 个组件有更新（安装后需重启 DSH）` : "已是最新");
+          if (n) setRestartHint({ staged: false, count: n });
           if (n && openOnHit) setUpdateOpen(true);
           await reload();
           return r;
@@ -1589,6 +1594,10 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
               ? h("div", { className: "qbw-hint", style: { color: "#c0392b" } },
                 "有组件因本地改动/未推送提交被拒，详情点「查看详情」。")
               : null,
+            (updates.pending ?? []).length
+              ? h("div", { className: "qbw-hint", style: { marginTop: "2px" } },
+                "下载完成 ≠ 已更新：需要完全退出 DSH 再打开才会应用（只刷新页面不会生效）。")
+              : null,
             h("div", { className: "qbw-actions" },
               h(Btn, { onClick: () => checkUpdates(), disabled: !!busy }, busy === "updates" ? "检查中…" : "检查更新"),
               (updates.results ?? []).some((x) => x.status === "unknown" || x.status === "failed")
@@ -1624,7 +1633,10 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
                       const r = await api("/updates", { method: "POST", body: { action: "apply", ids } });
                       const staged = (r.results ?? []).filter((x) => x.ok && x.staged);
                       const failed = (r.results ?? []).filter((x) => !x.ok);
-                      if (r.ok && staged.length) toast(`⏳ 已下载 ${staged.length} 个组件，退出并重新打开 DSH 后应用（尚未更新）`);
+                      if (r.ok && staged.length) {
+                        toast(`⏳ 已下载 ${staged.length} 个组件，退出并重新打开 DSH 后应用（尚未更新）`);
+                        setRestartHint({ staged: true, count: staged.length });
+                      }
                       else if (r.ok) toast(`✓ 已更新 ${r.updated} 个组件${r.restartRequired ? "，请重启对应服务" : ""}`);
                       else {
                         const f = failed[0] ?? {};
@@ -1710,6 +1722,24 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
           ],
           onClose: () => setSnowError(null),
         }) : null,
+        restartHint ? h("div", { className: "qbw-modal-backdrop", onClick: (e) => { if (e.target === e.currentTarget) setRestartHint(null); } },
+          h("div", { className: "qbw-modal" },
+            h("h3", null, restartHint.staged ? "更新已下载：重启 DSH 后生效" : "有可用更新：安装后需要重启 DSH"),
+            h("p", null, restartHint.staged
+              ? "文件已经下载并排队，退出 DSH 后会自动替换（尚未更新）。只刷新页面不会应用。"
+              : "这里只是发现了新版本；点「立即更新」下载后，需要完全退出 DSH 再打开，新版本才会生效。"),
+            h("ol", { style: { margin: "6px 0 8px", paddingLeft: "20px", fontSize: "12px", lineHeight: "20px" } },
+              h("li", null, "完全退出 DSH（包括托盘图标 / 任务栏里的窗口，不能只关设置页）"),
+              h("li", null, "重新打开 DSH"),
+              h("li", null, "回到这里点「检查更新」确认版本已变")),
+            h("p", { className: "qbw-hint" },
+              "为什么必须重启：更新助手要等 DSH 退出后才替换文件；插件本身跑在 DSH 进程里，没法热更新自己。"),
+            h("div", { className: "qbw-actions" },
+              restartHint.staged
+                ? h(Btn, { onClick: () => setRestartHint(null) }, "我知道了")
+                : h(Btn, { onClick: () => { setRestartHint(null); setUpdateOpen(true); } }, "去更新"),
+              h(Btn, { kind: "qbw-btn2", onClick: () => setRestartHint(null) }, "稍后")))
+          ) : null,
         updateOpen ? h(UpdatesModal, {
           status: updates,
           toast,
