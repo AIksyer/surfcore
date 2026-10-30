@@ -4,6 +4,20 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.7.12] - 2026-10-30
+
+### 修复（0.7.11 发布物被写成 CRLF，归档校验仍失败）
+
+- **根因**：发布脚本把**工作区文件**的字节直接发给 GitHub（Windows 是 CRLF），
+  而 git 提交与清单是 LF → 远端仓库/归档存 CRLF，客户端按 LF 哈希校验必然失败。
+- **修法**：发布脚本改为从 **git 对象**（`git show HEAD:<path>`）取内容，不再读工作区；
+  新增 `--all` 用于修历史污染（整棵树重传）。
+- 清单排除 `roles/ assets/ examples/ obs-diag.json` 等内容/本机文件。
+
+> 说明：0.7.11 的发布物换行符错误，**以本版为准**；升级到 0.7.12 后归档与清单逐字节一致。
+> 调查记录：[更新包哈希不符](docs/cases/2026-10-30-update-manifest-hash-drift.md)
+
+
 ## [0.7.11] - 2026-10-30
 
 ### 修复（0.7.9 的更新包自身哈希不符，自动更新仍失败）
