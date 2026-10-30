@@ -223,6 +223,43 @@ async function navAccount(cookies) {
   }
 }
 
+/**
+ * 核查已保存的登录凭据：读文件 → 再问一次 B站 nav → 核对 mid。
+ * 不是"信任扫码那一刻的结果"，而是每次都能重新验证（用户要求：要有核查机制）。
+ * 返回 { ok, account:{mid,name}, savedAt } 或 { ok:false, code, error, hint }。
+ */
+export async function verifyStoredCredentials(target = 'owner') {
+  const file = target === 'owner' ? OWNER_BILI_CRED : BILI_CRED;
+  if (!fs.existsSync(file)) {
+    return {
+      ok: false, code: 'bili.no-credentials',
+      error: `${target === 'owner' ? '主人' : '小肥鱼'}还没有扫码登录`,
+      hint: '到「B站」页点「扫码登录」，扫完再核查',
+    };
+  }
+  let cred = null;
+  try { cred = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { cred = null; }
+  if (!cred?.sessdata) {
+    return { ok: false, code: 'bili.bad-credentials', error: '凭据文件读不出来或缺少 SESSDATA', hint: '点「换号（清除旧凭据）」后重新扫码' };
+  }
+  const account = await navAccount({ SESSDATA: cred.sessdata, bili_jct: cred.bili_jct, buvid3: cred.buvid3 });
+  if (!account) {
+    return {
+      ok: false, code: 'bili.cookie-expired',
+      error: 'B站 返回“未登录”（cookie 过期、被踢下线，或网络不通）',
+      hint: '先确认网络能访问 api.bilibili.com；仍失败就重新扫码登录',
+    };
+  }
+  if (cred.mid && String(cred.mid) !== String(account.mid)) {
+    return {
+      ok: false, code: 'bili.mid-mismatch',
+      error: `凭据里记的是 ${cred.mid}（${cred.name || '?'}），但 B站 现在返回 ${account.mid}（${account.name}）`,
+      hint: '点「换号（清除旧凭据）」后重新扫码，避免张冠李戴',
+    };
+  }
+  return { ok: true, account: { mid: String(account.mid), name: String(account.name || '') }, savedAt: String(cred.savedAt || '') };
+}
+
 function writeOwnerCredentials(cookies, account) {
   const payload = {
     version: 1,

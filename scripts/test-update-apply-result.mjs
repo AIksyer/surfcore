@@ -22,7 +22,7 @@ function makeTarget(name, version = '0.6.22', { withMeta = false } = {}) {
   return dir;
 }
 
-function makeZip({ withManifest = true } = {}) {
+function makeZip({ withManifest = true, extraMissing = [], corrupt = [] } = {}) {
   const src = path.join(base, 'zip-src', 'surfcore-main');
   fs.rmSync(path.join(base, 'zip-src'), { recursive: true, force: true });
   fs.mkdirSync(path.join(src, 'plugins', 'surfcore'), { recursive: true });
@@ -39,6 +39,8 @@ function makeZip({ withManifest = true } = {}) {
     };
     walk(src);
     fs.mkdirSync(path.join(src, 'release'), { recursive: true });
+    for (const rel of extraMissing) files[rel] = '0'.repeat(64);
+    for (const rel of corrupt) if (files[rel]) files[rel] = 'f'.repeat(64);
     fs.writeFileSync(path.join(src, 'release', 'install-manifest.json'), JSON.stringify({ schemaVersion: 1, version: '0.7.0', files }));
   }
   const zip = path.join(base, 'pkg.zip');
@@ -169,6 +171,127 @@ try {
       ok(r.updated === 0, '暂存：updated=0（不算已更新）', String(r.updated));
       ok(r.pendingRestart === 1, '暂存：pendingRestart=1');
       ok(fs.existsSync(path.join(dir, '.state', 'updates-pending.json')), '暂存：pending 文件已写');
+    } finally { restore(); delete process.env.SURFCORE_UPDATE_NO_SPAWN; }
+  }
+
+  // 3.4) 清单哈希与包内内容不符（发布包自身不一致）→ 确定性失败，别让用户反复点
+  {
+    const ZIP_BAD_HASH = makeZip({ corrupt: ['package.json'] });
+    const dir = makeTarget('bad-hash', '0.6.22', { withMeta: true });
+    const svc = mkService(dir);
+    const restore = stubFetch(async (u) => (u.includes('/archive/') ? new Response(ZIP_BAD_HASH, { status: 200 }) : undefined));
+    process.env.SURFCORE_UPDATE_NO_SPAWN = '1';
+    try {
+      await svc.check({ fetch: true });
+      const r = await svc.apply(['surfcore']);
+      const row = r.results[0];
+      ok(row.ok === false && row.code === 'verify.staging-mismatch', '哈希不符：code=verify.staging-mismatch', JSON.stringify(row));
+      ok(row.deterministic === true, '哈希不符：标为确定性失败（重试无效）', String(row.deterministic));
+      ok(/\d+ 个文件哈希不符/.test(String(row.reason)), '哈希不符：原因带数量', String(row.reason));
+      ok(String(row.hint).includes('手动下载'), '哈希不符：建议手动下载', String(row.hint));
+      const la = svc.status().lastApply;
+      ok(la?.deterministic === true && Number(la?.mismatchCount) >= 1, '常驻失败状态带 mismatchCount', JSON.stringify(la));
+    } finally { restore(); delete process.env.SURFCORE_UPDATE_NO_SPAWN; }
+  }
+
+  // 3.5) 清单里有包内不存在的文件（旧清单/分支差异）→ 不能因此判失败
+  {
+    const ZIP_MISSING = makeZip({ extraMissing: ['_backups/should-not-exist.json', 'audio/cloud-test.wav'] });
+    const dir = makeTarget('staging-missing', '0.6.22', { withMeta: true });
+    const svc = mkService(dir);
+    const restore = stubFetch(async (u) => (u.includes('/archive/') ? new Response(ZIP_MISSING, { status: 200 }) : undefined));
+    process.env.SURFCORE_UPDATE_NO_SPAWN = '1';
+    try {
+      await svc.check({ fetch: true });
+      const r = await svc.apply(['surfcore']);
+      ok(r.results[0].ok === true, '清单缺文件：不判失败（交集校验）', JSON.stringify(r.results[0]));
+      ok(r.results[0].status === 'pending_restart', '清单缺文件：仍能进入待重启');
+    } finally { restore(); delete process.env.SURFCORE_UPDATE_NO_SPAWN; }
+  }
+
+  // 3.55) 下载走 codeload 直连；codeload 失败自动换 github 归档（不押单一域名）
+  {
+    const dir = makeTarget('codeload', '0.6.22', { withMeta: true });
+    const svc = mkService(dir, { archiveUrl: '' });
+    const seen = [];
+    const restore = stubFetch(async (u) => {
+      if (u.includes('codeload.github.com')) { seen.push(u); return new Response('down', { status: 500 }); }
+      if (u.includes('/archive/refs/tags/')) { seen.push(u); return new Response(ZIP, { status: 200 }); }
+      if (u.includes('/releases/latest')) return new Response(null, { status: 302, headers: { location: 'https://github.com/Mieksido/surfcore-test/releases/tag/v0.7.0' } });
+      return undefined;
+    });
+    process.env.SURFCORE_UPDATE_NO_SPAWN = '1';
+    try {
+      await svc.check({ fetch: true });
+      const r = await svc.apply(['surfcore']);
+      ok(r.results[0].ok === true, 'codeload 失败后换归档成功', JSON.stringify(r.results[0]));
+      ok(seen[0].includes('codeload.github.com'), '首先尝试 codeload 直连', seen[0] || '');
+      ok(seen.some((u) => u.includes('github.com/Mieksido') && u.includes('/archive/')), '失败后回退 github 归档', seen.join(' | '));
+    } finally { restore(); delete process.env.SURFCORE_UPDATE_NO_SPAWN; }
+  }
+
+  // 3.56) 目标只有提交号（没有版本）→ 阻止自动更新，不装"版本不变的快照"
+  {
+    const dir = makeTarget('no-semver', '0.6.22', { withMeta: true });
+    fs.writeFileSync(path.join(dir, '.installed-meta.json'), JSON.stringify({ version: '0.6.22', sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }));
+    const svc = mkService(dir, { archiveUrl: '' });
+    const restore = stubFetch(async (u) => {
+      if (u.includes('/releases/latest')) return new Response('', { status: 404 });
+      if (u.includes('/tags?')) return new Response('[]', { status: 200 });
+      return undefined;
+    });
+    process.env.SURFCORE_UPDATE_NO_SPAWN = '1';
+    try {
+      await svc.check({ fetch: true });
+      const r = await svc.apply(['surfcore']);
+      const row = r.results[0];
+      const blocked = row.ok === false && row.code === 'version-unknown';
+      const noPending = row.ok === false && (r.results[0].status === 'blocked');
+      ok(blocked || noPending, '没有版本号 → 阻止自动更新', JSON.stringify(row));
+      ok(/未发版|没有对应的发布版本/.test(String(row.reason)), '原因说明"没有发布版本"', String(row.reason));
+    } finally { restore(); delete process.env.SURFCORE_UPDATE_NO_SPAWN; }
+  }
+
+  // 3.6) 有版本号时下载 tag 归档（main.zip 会漂移，和清单对不上）
+  {
+    const dir = makeTarget('tag-url', '0.6.22', { withMeta: true });
+    const svc = mkService(dir, { archiveUrl: '' });
+    const seen = [];
+    const restore = stubFetch(async (u) => {
+      if (u.includes('/releases/latest')) {
+        return new Response(null, { status: 302, headers: { location: 'https://github.com/Mieksido/surfcore-test/releases/tag/v0.7.0' } });
+      }
+      if (u.includes('/zip/') || u.includes('/archive/')) { seen.push(u); return new Response(ZIP, { status: 200 }); }
+      return undefined;
+    });
+    process.env.SURFCORE_UPDATE_NO_SPAWN = '1';
+    try {
+      await svc.check({ fetch: true });
+      await svc.apply(['surfcore']);
+      ok(seen.some((u) => /(codeload\.github\.com\/.*\/zip\/refs\/tags\/v0\.7\.0|\/archive\/refs\/tags\/v0\.7\.0\.zip$)/.test(u)), '有版本号时下载 tag 归档', seen.join(' | '));
+      ok(!seen.some((u) => u.includes('/refs/heads/main.zip')), '不再下载分支归档');
+    } finally { restore(); delete process.env.SURFCORE_UPDATE_NO_SPAWN; }
+  }
+
+  // 3.7) 失败后必须清掉 staging（报告：每次留 11.8MB，点 10 次 100MB+）
+  {
+    const dir = makeTarget('cleanup', '0.6.22', { withMeta: true });
+    const svc = mkService(dir);
+    const restore = stubFetch(async (u) => (u.includes('/archive/') ? new Response('nope', { status: 500 }) : undefined));
+    process.env.SURFCORE_UPDATE_NO_SPAWN = '1';
+    try {
+      await svc.check({ fetch: true });
+      await svc.apply(['surfcore']);
+      const stagingDir = path.join(dir, '.state', 'staging');
+      const left = fs.existsSync(stagingDir) ? fs.readdirSync(stagingDir) : [];
+      ok(left.length === 0, '失败后 staging 已清理', JSON.stringify(left));
+      const st = svc.status();
+      ok(st.lastApply?.status === 'failed', '失败状态常驻（不靠 toast）', JSON.stringify(st.lastApply));
+      ok(st.lastApply?.code === 'download.http-500', '常驻状态带 code', String(st.lastApply?.code));
+      // 下载失败后 30 分钟内不再自动弹同一条（用户关一次不该下次检查又弹）
+      ok((st.pending ?? []).length === 0, '失败后不再进待办（30 分钟退避）', JSON.stringify(st.pending));
+      const persisted = JSON.parse(fs.readFileSync(path.join(dir, '.state', 'updates.json'), 'utf8'));
+      ok(Boolean(persisted.applyBackoff?.surfcore), '退避状态已持久化', JSON.stringify(persisted.applyBackoff));
     } finally { restore(); delete process.env.SURFCORE_UPDATE_NO_SPAWN; }
   }
 

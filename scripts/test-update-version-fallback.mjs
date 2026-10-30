@@ -236,6 +236,28 @@ try {
     } finally { restore(); }
   }
 
+  // 用例 6.9：github.com 不可达（302 超时），但 api tags 可用 → 必须显示版本号，不能退化提交号
+  {
+    const dir = makeInstall('tags-fallback', '0.7.13');
+    fs.writeFileSync(path.join(dir, '.installed-meta.json'), JSON.stringify({ version: '0.7.13', sha: 'c20ebd11c4dd1ab60e66b0c2dd089153f20b614d' }));
+    const repo = `Mieksido/t69-${seq += 1}`;
+    const real = globalThis.fetch;
+    globalThis.fetch = async (url, init = {}) => {
+      const u = String(url);
+      if (u.includes('/releases/latest')) throw new Error('github.com unreachable'); // 模拟域名超时
+      if (u.includes('/commits/main')) return new Response(JSON.stringify({ sha: '25978a3febc0a5afd9b482e2abace43cd42520c8' }), { status: 200 });
+      if (u.includes('/contents/package.json')) return new Response('{}', { status: 404 });
+      if (u.includes('/tags?')) return new Response(JSON.stringify([{ name: 'v0.7.16' }]), { status: 200 });
+      return new Response('{}', { status: 404 });
+    };
+    try {
+      const r = await inspectVersionComponent({ versionRepo: repo, dir });
+      ok(r.latestVersion === '0.7.16', 'github.com 不通时用 API tags 拿到版本号', String(r.latestVersion));
+      ok(!/^[0-9a-f]{7,40}$/.test(String(r.latestVersion)), '不再把提交号当版本号', String(r.latestVersion));
+      ok(r.code === 'new-commit', '仍按提交判定有更新', String(r.code));
+    } finally { globalThis.fetch = real; }
+  }
+
   // 用例 7：复刻事故现场——无 git、无 .installed-meta、本地 0.6.22、远端 0.7.0
   // 期望：inspectComponent 降级后按版本号判断 → status=update（不能是 latest）
   {

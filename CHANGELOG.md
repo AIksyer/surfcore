@@ -17,6 +17,197 @@
 > 调查记录：[孤立代理项导致 400](docs/cases/2026-10-30-lone-surrogate-400.md)
 
 
+## [0.7.19] - 2026-10-30
+
+### 新增（插件冲突体检）
+
+- 设置 → 概览「检查更新」旁新增「插件体检」：只读扫描 profile 的 bundles / `cordis.patch.yml` /
+  已安装包 / 已知第三方插件 / SurfCore QQ 工具策略；
+- 优先发现：第三方工具被 QQ guard 拒绝（例如本地执行类工具；`billion-context` 的 5 个上下文工具本版已放行）、
+  第三方接管压缩但 `compaction-basic auto=false`、插件未声明工具清单（`unknown`）；
+- 报告带等级、证据、影响、建议、覆盖范围与未检查项，可复制 JSON；
+- 不启动/停止服务、不改白名单、不禁用插件；未知插件明确标 `unknown`，不冒充“兼容”。
+
+### 新增（闸门事件中心 + 单轮 L3 止血）
+
+- `src/gate-events.js`：L0–L3 统一分级、去重 ack、脱敏、2MB 轮转；
+- `src/turn-guard.js` + bridge `guardTurnEvent`：单轮工具步数 40、同一 tool+error 3 次、
+  回合内每日额度耗尽 → **cancel-only** 停止 + 直接 QQ 通知，不再等模型自己放弃；
+- 设置 → 概览新增「安全提醒」卡片；L2/L3 弹窗，确认后不重复弹；
+- 插件 `/gate-events` 读写；兼容性体检的 blocker/high 自动进事件中心；
+- **未做**单轮费用上限（价格表未覆盖全部模型）、pre-call 阻断、L0/L1 全量生产者接入。
+
+### 变更（QQ 工具白名单）
+
+- 放行 `billion-context` 注入的 5 个上下文工具：`compress` / `decompress` / `search_context` /
+  `acp_status` / `acp_cache`。不放行时模型会反复重试被拒工具（实测单回合 197 次），
+  而 QQ 会话失去上下文压缩更容易爆上下文；这 5 个只操作上下文，不含本地执行/网络写操作。
+
+
+## 计划
+
+- 把 SurfCore 打成 npm 包 + DSH bundle，支持 `dsh plugin add` 一条命令安装
+- 语音包的"离线音频转音频"（RVC）接口
+- 更新面板显示远端版本号（目前只有提交数/版本清单）
+- 插件冲突体检 P1：端口/进程归属、运行时工具拒绝/重复回复、回合熔断
+
+
+## [0.7.18] - 2026-10-30
+
+### 新增（B站 扫码登录可见/可核查；管理员 UID 支持长号）
+
+- **扫码成功**：弹窗内显示「✅ 登录成功 + 昵称（mid） + 保存时间」，点「完成」才关闭；
+- **登录核查**：B站 页新增「B站 登录账号」卡片（主人/小肥鱼各自昵称、mid、保存时间），
+  「核查登录」读凭据文件后再问一次 B站 nav 并核对 mid，返回
+  `bili.no-credentials / cookie-expired / mid-mismatch / verify-network` + 建议；
+- **UID/昵称核查**：管理员卡片新增「核查 UID 与昵称」——查 B站 公开名片比对真实昵称，
+  不一致给「用 B站 昵称填上」；
+- **长 UID**：`ADMIN_MID_RE` 放宽到 **4~20 位**；非法值保存时返回 `admin.mid-invalid` + 建议
+  （以前是静默清空，用户以为“填不进去”）；
+- **失败提示**：扫码启动失败带 `bili.qr-start-failed` + 建议；过期/失败文案补“下一步”。
+
+> 调查记录：[B站 登录核查与长 UID](docs/cases/2026-10-30-bili-login-uid-verify.md)
+
+
+## [0.7.17] - 2026-10-30
+
+### 修复（github.com 不通时：查不到新版本、下载必失败、反复弹窗）
+
+- **版本发现补 api tags**：提交模式下取不到版本时，先查 `api.github.com/tags`（不依赖 `github.com`），
+  再退 `releases/latest` 的 302 —— 不再把提交号当版本号显示；
+- **下载改 codeload 直连**：`codeload.github.com/.../zip/refs/tags/vX.Y.Z`，失败依次回退 github 归档、
+  gh-proxy、ghproxy；`diagnostics.tried` 记录试过的地址；
+- **非版本目标阻止自动更新**：目标不是 `x.y.z` 时返回 `blocked(version-unknown)`，
+  不再下载 main 快照（那种包装上去“版本号永远不变”）；
+- **失败后退避 30 分钟**：下载/网络类失败不再让同一条更新提示每次检查都弹；手动检查仍能看到结果；
+- 组件显式配置了 `archiveUrl` 时只试它，不额外加镜像。
+
+> 调查记录：[提交号当版本号 + 下载单点](docs/cases/2026-10-30-update-commit-vs-version.md)
+
+
+## [0.7.16] - 2026-10-30
+
+### 新增（更新后必须重启 DSH 的提示）
+
+- **检查到更新**：toast 与更新弹窗都写明「安装后需要重启 DSH」；
+- **专门的提示弹窗**：发现更新时说明「这里只是发现新版本，下载后要完全退出 DSH 再打开」，
+  并给出三步操作（完全退出 / 重开 / 回来确认版本），附「为什么必须重启」；
+- **下载完成（已暂存）**：弹窗改为「更新已下载：重启 DSH 后生效」，明确“尚未更新”；
+- **更新卡片常驻一行**：「下载完成 ≠ 已更新；只刷新页面不会生效」。
+
+> 测试：契约测试钉住提示文案与触发点；audit 86/86；插件测试全绿。
+
+
+## [0.7.15] - 2026-10-30
+
+### 修复（云端语音“不行”到底卡在哪：换路兜底 + 失败分类 + 自检）
+
+- **换路兜底**：合成失败时按类型决定是否换到另一条 endpoint 重试（cloud ⇄ local）；
+  限流 / 音色映射错不换路；换路成功标 `degraded` 并在日志记录。
+- **失败分类**：新增 `src/voice-diagnostics.js`——
+  `voice.rate-limited` / `config-mapping` / `service-down` / `upstream-auth` /
+  `upstream-network` / `engine-failed` / `unknown`，每类带可执行 hint。
+- **失败留痕**：`state/voice-errors.log`（JSONL：route/code/stage/message/fallback）；
+  语音接口 `ok:false` 带 `code` + `hint`；限流错误带 `voice.rate-limited`，不再被当成“TTS 掉线”。
+- **三步自检**：桥接 `/api/voice/tts-check` + 语音页「语音自检」卡片——
+  服务可达 → 实际合成 → 发送前置（总闸/工具/额度），分别给结论（不真的发消息）。
+
+> 调查记录：[云端语音失败归因](docs/cases/2026-10-30-voice-cloud-fallback-diagnostics.md)
+
+
+## [0.7.14] - 2026-10-30
+
+### 新增（SnowLuma 手动指定安装位置）
+
+- 「检测已安装的 SnowLuma」旁新增 **「手动选择已安装的 SnowLuma」**；
+- 点击先弹说明：导入的是**已装好的 SnowLuma 的启动文件**（`SnowLuma.exe` / `app\launcher.bat`，也可选根目录），
+  **不下载、不安装、不移动、不删除任何文件**；
+- 文件对话框类型限定 `SnowLuma.exe;launcher.bat`（此前只有 `*.exe`，选不到 `launcher.bat`）；
+- 宿主 `/browse` 只接受 `filter=snowluma` 枚举，不接受任意过滤串；
+- 失败仍走结构化弹窗（原因 + 建议 + 试过的路径）。
+
+> 测试：契约测试钉住按钮、说明文案、过滤器与宿主映射；audit 85/85；插件测试全绿。
+
+
+## [0.7.13] - 2026-10-30
+
+### 修复（桌宠：填了安装目录点安装仍报「请先填写安装包地址」）
+
+- **根因**：前端 `POST /pet/install` 的 body 是 `{}`，后端读的是已保存配置（`source`/`appDir` 为空）；
+  安装目录输入框也没有保存路径，用户填了等于没填。
+- **修法**：
+  - 安装请求带 `{source, appDir, electronPath}`，启动请求带 `{electronPath}`；
+  - 后端 `/pet/install`、`/pet/start` 接收 body；`install(source, patch)` **先把表单落盘再执行**；
+  - Windows 路径校验：非 `X:\` 开头 → `code=pet.path-no-drive` + 正确写法提示；
+  - 空安装包地址 → `code=pet.source-missing`、`field=source`、hint 指向「用官方最新版」；
+  - 安装目录下方补提示：Windows 必须带盘符。
+- **测试**：新增 `test-pet-install-form`（盘符 / 结构化错误 / 表单落盘 / 前后端契约）。
+
+> 调查记录：[桌宠安装表单未提交](docs/cases/2026-10-30-pet-install-form-not-submitted.md)
+
+
+## [0.7.12] - 2026-10-30
+
+### 修复（0.7.11 发布物被写成 CRLF，归档校验仍失败）
+
+- **根因**：发布脚本把**工作区文件**的字节直接发给 GitHub（Windows 是 CRLF），
+  而 git 提交与清单是 LF → 远端仓库/归档存 CRLF，客户端按 LF 哈希校验必然失败。
+- **修法**：发布脚本改为从 **git 对象**（`git show HEAD:<path>`）取内容，不再读工作区；
+  新增 `--all` 用于修历史污染（整棵树重传）。
+- 清单排除 `roles/ assets/ examples/ obs-diag.json` 等内容/本机文件。
+
+> 说明：0.7.11 的发布物换行符错误，**以本版为准**；升级到 0.7.12 后归档与清单逐字节一致。
+> 调查记录：[更新包哈希不符](docs/cases/2026-10-30-update-manifest-hash-drift.md)
+
+
+## [0.7.11] - 2026-10-30
+
+### 修复（0.7.9 的更新包自身哈希不符，自动更新仍失败）
+
+- **根因**：清单的 sha256 取自**工作目录文件**（Windows 是 CRLF），发布物是 git 提交（LF）→
+  两边哈希必然不同；0.7.9 只修了“文件集合”，没修“内容来源”。
+- **修法**：
+  - 清单改用 `git cat-file` 读 **HEAD blob 字节**计算，与 GitHub 归档逐字节一致；
+  - 新增 `--verify-ref <ref>` **发版硬门禁**：清单与 ref 内容不一致就 exit 1；
+  - 镜像同步白名单补 `.gitignore` 等 dotfile（漏同步同样会让清单对不上）；
+  - 客户端把 `verify.staging-mismatch` 标为**确定性失败**：原因带不符/缺失数量，hint 说明
+    “发布侧问题、重试无效”，弹窗禁用「立即更新」并给「手动下载」；`lastApplyFailure`
+    增加 `deterministic / mismatchCount / missingCount / sample`。
+
+> 调查记录：[更新包哈希不符](docs/cases/2026-10-30-update-manifest-hash-drift.md)
+
+
+## [0.7.10] - 2026-10-30
+
+### 新增（语音页网盘离线包入口）
+
+- 两张语音包卡片下方加总说明：**本地包 / 云端包都适用**——网络不稳定装不上时，用网盘下载离线包，
+  解压后点卡片上的「导入离线包…」，选择解压出来的 `voice-local` / `voice-cloud` 文件夹。
+- 新增按钮「打开网盘下载（提取码 sxUZ）」：走宿主 `POST /voice/packs/netdisk` 用系统浏览器打开
+  （Electron 会拦 `target=_blank`）；链接写死在后端，不接受用户输入；打不开时自动复制链接兜底。
+- 契约测试钉住链接、文案与按钮，防止以后被误删。
+
+
+## [0.7.9] - 2026-10-30
+
+### 修复（zip 安装的自动更新 100% 失败：verify.staging-mismatch）
+
+- **根因**：`release-manifest.mjs` 扫的是开发工作目录，把 gitignore 的 `_backups/`、`audio/`、
+  本地改过的 docs 都列进清单；用户下载的 GitHub 归档不可能包含这些文件。而
+  `verifyStaging()` 要求清单里**每个文件都存在且哈希一致** → 恒假 → 永远到不了暂存。
+- **修法**：
+  - 清单只列 `git ls-files`（归档里有什么就列什么）；工作区脏时生成脚本报错；
+  - 有版本号时下载 **tag 归档**（`refs/tags/vX.Y.Z.zip`），不再用会漂移的 `main.zip`；
+  - 校验改为**交集**：只比包内真实存在的文件；缺失只计数记日志，不判失败；
+  - 旧脏清单自愈：出现“新包没有的路径”就用包内清单覆盖安装记录（git 工作副本跳过）；
+  - 按提交判定有更新时用 302 补取版本号（显示与 tag 下载都需要）。
+- **失败可见**：`state.lastApplyFailure` 持久化，弹窗内常驻红块（code/原因/建议/复制诊断/去下载新版）；
+  失败即删除本次 staging，不再累积。
+
+> 注意：0.7.1–0.7.8 的 zip 用户**无法自动升到本版**（旧版仍执行旧校验），需手动覆盖一次。
+> 调查记录：[zip 更新 verify.staging-mismatch](docs/cases/2026-10-30-update-verify-staging-mismatch.md)
+
+
 ## [0.7.8] - 2026-10-29
 
 ### 修复（语音页保存显示「toast is not a function」，其实已保存）
@@ -771,14 +962,6 @@
 - **关掉 B站 后分享定时器仍在跑**：分享调度只在桥接启动时读 `biliBridge.enabled`，设置页的
   「启动B站」关不掉它；现在每次触发前按 30 秒缓存读统一配置的 `platforms.start.bili`。
 - **分享历史写失败被静默吞掉**：`saveHistory()` 的 `catch {}` 改为打日志——写不进去会让去重永久失效。
-
-## [Unreleased]
-
-### 计划
-
-- 把 SurfCore 打成 npm 包 + DSH bundle，支持 `dsh plugin add` 一条命令安装
-- 语音包的"离线音频转音频"（RVC）接口
-- 更新面板显示远端版本号（目前只有提交数/版本清单）
 
 ## [0.1.0] - 2026-10-26
 

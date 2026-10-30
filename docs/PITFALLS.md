@@ -2838,3 +2838,94 @@ Node 读文件后删除；不再解析 stdout。所有「浏览…」共用此�
 「管理员是身份不是称呼」；插件启动时 `ensureAdminProjection()` 补投影，
 桥接在跑则自动重启；补单测钉住 qq.admin.displayName 与无称呼提示词。
 **验证**：`test-admin-identity`、`test-admin-prompt-wiring`、`test:audit`。
+
+## 安装清单从开发目录生成 → zip 更新 100% 失败
+
+- **现象**：点更新反复失败、版本不变；只有 4 秒 toast；没有 pending、没有助手进程。
+- **根因**：`release-manifest.mjs` 扫工作目录（含 `_backups/`、`audio/`、本地改过的 docs），
+  与 GitHub 归档天然不一致；`verifyStaging` 又要求清单文件全部存在且哈希一致 → 恒假。
+- **修法**（0.7.9）：清单只列 `git ls-files`（工作区脏则报错）；有版本号时下载 tag 归档；
+  校验改交集（只比存在的文件）；旧脏清单自愈；失败常驻可见；失败清 staging。
+- **教训**：**制品和校验清单必须由同一次发布流程产出**；校验规则不能假设“两边完全相等”。
+
+## 清单哈希取自工作目录 → 更新包永远校验失败（CRLF）
+
+- **现象**：zip 用户点更新，下载成功但校验 92 处哈希不符；版本不变。
+- **根因**：清单 sha256 取自工作区文件（CRLF），发布物是 git 提交（LF）→ 必然不同。
+- **修法**（0.7.11）：`release-manifest` 用 `git cat-file` 读 HEAD blob 算哈希；
+  新增 `--verify-ref <ref>` 发版门禁；同步白名单补 dotfiles。
+- **教训**：清单/制品/校验必须同源同字节；Windows 上任何“读工作区文件算哈希”都会踩 CRLF。
+
+## 桌宠安装请求不带表单 → 填了也不生效
+
+- **现象**：填了安装目录、Electron 已下载，点「安装」报「请先填写安装包地址」；config.json 里 source/appDir 为空。
+- **根因**：前端 `POST /pet/install` body 是 `{}`，后端读持久化配置（空）；输入框也没有保存路径。
+- **修法**（0.7.13）：安装/启动请求带 `{source, appDir, electronPath}`，后端先落盘再执行；
+  Windows 路径要求盘符（`pet.path-no-drive`）；空地址返回 `pet.source-missing` + field + hint。
+- **教训**：「表单即配置」的页面，动作请求必须显式带表单，并用契约测试钉住。
+
+## 语音失败被统一当成“TTS 没起来”
+
+- **现象**：用户/模型说“云端语音坏了”，实际可能是限流、音色映射错、本地服务没起、火山鉴权失败。
+- **根因**：503 的 detail 被桥接包成一句人话；失败不落盘；渲染失败不换路。
+- **修法**（0.7.15）：`voice-diagnostics` 分类 + 换路重试 + `voice-errors.log` + 语音页三步自检。
+- **教训**：跨服务的错误必须保留 code/上游 detail，否则“谁的锅”永远靠猜。
+
+## 更新检查/下载押在 github.com 单点
+
+- **现象**：远端已有 v0.7.16，界面只显示「v0.7.13 → 提交 c2205d4」；点更新报 `download.network`；关掉又弹。
+- **根因**：提交模式跳过 tag 查询；下载只走 `github.com/.../main.zip`；失败不进退避。
+- **修法**（0.7.17）：先查 `api/tags` 取版本；下载走 `codeload` 直连 + 归档/镜像回退；非 semver 目标阻止；
+  下载类失败 30 分钟退避。
+- **教训**：版本发现、下载、退避是三件独立的事；查版本要多源（api/302/codeload），别押一个域名。
+
+## 管理员 B站 UID 长号“填不进去”
+
+- **现象**：填 15 位/十几位 UID，保存后变空，没有任何提示。
+- **根因**：`ADMIN_MID_RE` 限 4~15 位，超出被 `normalizeAdmin` 静默清空；前端无提示、保存无报错。
+- **修法**（0.7.18）：放宽到 4~20 位；非法值返回 `admin.mid-invalid` + hint；输入框提示位数；
+  另加「核查 UID 与昵称」（查 B站 名片比对真实昵称）。
+
+## #88（2026-10-30）第三方全局工具被 QQ 白名单拒 → 模型反复重试
+
+**现象**：用户装了第三方 `billion-context`（0.1.209），它把
+`compress/decompress/search_context/acp_status/acp_cache` 注入 DSH 全局工具层；
+QQ 会话的 `qq-tool-restrict` 不认识这些工具，执行期拒绝。模型把拒绝当普通工具错误，
+197 次 compress / 214 步 / 46 分钟，约 ¥20。
+
+**根因**：
+1. SurfCore 的工具有效边界是 `qq-tool-restrict` 的精确白名单，第三方插件没有统一的工具声明；
+2. 工具被拒只返回字符串，没有“停止/熔断”语义；
+3. 每日 token 额度只在唤醒前检查，回合内不生效；
+4. `billion-context` 同时把 DSH `compaction-basic` 的 `auto` 关掉，QQ 会话失去两套压缩。
+
+**修法（本批）**：新增只读「插件冲突体检」，优先覆盖：
+`COMPAT_TOOL_DENIED` / `COMPAT_COMPACTION_CONFLICT` / `COMPAT_TOOL_INVENTORY_UNKNOWN`；
+未知插件必须显示 `unknown`，不能冒充已检查。入口在设置→概览「检查更新」旁。
+
+**未修（下一批）**：回合级熔断（重复错误/步数/单轮费用/回合内额度）与端口/进程检查；
+本次体检只能提前发现，不能替代运行时止损。
+
+**验证**：`node scripts/test-plugin-compat.mjs`；`npm run test:audit`。
+
+## #89（2026-10-30）每日额度管不住正在跑的回合 → 工具拒绝循环烧钱
+
+**现象**：`compress` 被 QQ 白名单拒，模型在同一个 turn 里试了 197 次；
+每日 token 额度只在唤醒前检查，回合开始后没有任何步数/重复错误/额度硬闸。
+
+**根因**：
+1. `tokenGuardWakeBlock` 只在唤醒前检查 `evaluateBudget`；send guard 只查防爆破；
+2. `qq-tool-restrict` 的拒绝只是普通工具错误，没有“停止”语义；
+3. bridge 的 `trackTurnEvent` 只收最终文本，不计数；
+4. 没有 cancel-only 接口用于“只止血、不清队列”。
+
+**修法**：
+- `src/turn-guard.js`：maxSteps 40 / 同 tool+error 3 次 / 回合内额度；
+- `bridge.pumpMux` 接 `guardTurnEvent`，命中后 `api.cancelTurn()` + 直接 QQ 通知；
+- `src/gate-events.js`：L0–L3 事件中心、去重 ack、2MB 轮转；
+- 插件 `/gate-events` + 概览「安全提醒」卡/L2/L3 弹窗。
+
+**未修**：单轮费用上限（价格表覆盖不全）、pre-call 阻断、L0/L1 全量生产者接入。
+
+**验证**：`node scripts/test-gate-events.mjs`；`npm run test:audit` 88/88；
+`plugins/surfcore npm test`。

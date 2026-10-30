@@ -372,4 +372,47 @@ assert.ok(!/h\(VoiceTab, \{ toast \}\)/.test(source), 'VoiceTab 不能收裸 toa
 assert.ok(source.includes('const [toastText, setToastText]'), '浮层文案状态应叫 toastText（避免与 notify 混淆）');
 assert.ok(source.includes('if (tab === "voice") return h(VoiceTab, { toast: notify });'), '语音页接线固定为 toast: notify');
 
+// ── 语音页网盘离线包入口（2026-10-30 用户要求：网络不稳时可走网盘）──
+assert.ok(source.includes('https://pan.quark.cn/s/ec6cf2b123de?pwd=sxUZ'), '语音页必须包含网盘链接');
+assert.ok(source.includes('网络不稳定装不上？用网盘下载离线包（本地包 / 云端包都适用）'), '必须说明本地包/云端包都适用');
+assert.ok(source.includes('打开网盘下载（提取码 sxUZ）'), '必须有「打开网盘下载」按钮');
+assert.ok(source.includes('复制链接'), '必须有复制链接兜底');
+assert.ok(source.includes('api("/voice/packs/netdisk"'), '按钮必须走后端打开（Electron 会拦新窗口）');
+
+// ── 桌宠安装：表单必须随请求提交（2026-10-30 用户反馈：填了也不生效）──
+assert.ok(/api\("\/pet\/install",[\s\S]{0,200}source: form\.source\.trim\(\)/.test(source), '桌宠安装请求必须带 source');
+assert.ok(/api\("\/pet\/install",[\s\S]{0,260}appDir: form\.appDir\.trim\(\)/.test(source), '桌宠安装请求必须带 appDir');
+assert.ok(/act\("start", \{ electronPath: form\.electronPath\.trim\(\) \}\)/.test(source), '桌宠启动请求必须带 electronPath');
+
+// ── 手动导入 SnowLuma（2026-10-30 用户要求：检测按钮旁加手动选择 + 说明导入的是什么）──
+assert.ok(source.includes('手动选择已安装的 SnowLuma'), '必须提供「手动选择已安装的 SnowLuma」按钮');
+assert.ok(/setSnowImport\(true\)/.test(source), '按钮要打开说明弹窗（不是直接开选择框）');
+assert.ok(source.includes('导入 SnowLuma 的安装位置'), '说明弹窗标题存在');
+assert.ok(source.includes('SnowLuma.exe —— SnowLuma2 目录里的主程序'), '弹窗必须说清要选什么文件');
+assert.ok(source.includes('不会下载、不会安装、不会移动或删除任何文件'), '弹窗必须说明不会改动文件');
+assert.ok(/browseNative\("file",[^)]*"snowluma"\)/.test(source), '文件选择必须用 snowluma 过滤器');
+assert.ok(!/browseNative\("file",[^)]*filter:/.test(source), '不得把原始 filter 串传给宿主');
+
+
+
+// ── 更新后必须提示重启 DSH（2026-10-30 用户要求）──
+assert.ok(source.includes('restartHint'), '必须有重启提示状态');
+assert.ok(source.includes('更新已下载：重启 DSH 后生效'), '下载完成后要提示重启');
+assert.ok(source.includes('有可用更新：安装后需要重启 DSH'), '检查到更新后要提示安装需重启');
+assert.ok(source.includes('完全退出 DSH'), '提示要说明“完全退出”而不是刷新页面');
+assert.ok(/setRestartHint\(\{ staged: true/.test(source), '暂存成功后设置重启提示');
+assert.ok(source.includes('下载完成 ≠ 已更新'), '更新卡片要有常驻提示');
+
+// ── B站 登录核查 + 管理员 UID 核查 + 长 UID（2026-10-30 用户要求）──
+assert.ok(source.includes('B站 登录账号'), 'B站 页要有登录账号卡片');
+assert.ok(source.includes('核查登录'), '登录账号卡片要有「核查登录」');
+assert.ok(/api\("\/bili\/account\/verify"/.test(source), '核查登录要调后端');
+assert.ok(source.includes('✅ 登录成功'), '扫码成功后弹窗要显示成功账号');
+assert.ok(source.includes('核查 UID 与昵称'), '管理员卡片要有 UID/昵称核查');
+assert.ok(/api\("\/bili\/verify-user"/.test(source), 'UID 核查要调后端');
+assert.ok(source.includes('4~20 位数字'), 'UID 输入要提示位数范围');
+assert.ok(source.includes('用 B站 昵称填上'), '昵称不一致要能一键填上');
+
+
+
 console.log('client contract tests OK');
