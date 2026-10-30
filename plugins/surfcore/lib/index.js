@@ -1886,6 +1886,24 @@ export function apply(ctx) {
   async function handleVoice(req, res, url) {
     const suffix = url.pathname.slice(`${API_PREFIX}/voice`.length) || '';
     const method = String(req.method || 'GET').toUpperCase();
+    // 网盘离线包入口：Electron 里 target=_blank 会被拦，统一由宿主打开浏览器。
+    // 链接写死（不接受用户输入），避免变成任意 URL 打开器。
+    if (url.pathname === `${API_PREFIX}/voice/packs/netdisk`) {
+      if (method !== 'POST') { json(res, 405, { ok: false, code: 'METHOD_NOT_ALLOWED', error: '只支持 POST' }); return; }
+      const NETDISK_URL = 'https://pan.quark.cn/s/ec6cf2b123de?pwd=sxUZ';
+      if (process.platform !== 'win32') {
+        json(res, 200, { ok: false, code: 'OPEN_URL_UNSUPPORTED', error: '当前系统不支持自动打开浏览器', hint: `手动打开：${NETDISK_URL}`, url: NETDISK_URL });
+        return;
+      }
+      try {
+        // start 的第一个空参数是窗口标题，不能省；.usebackq 不需要，URL 里无 & 之外的 shell 元字符。
+        spawn('cmd.exe', ['/c', 'start', '', NETDISK_URL], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+        json(res, 200, { ok: true, url: NETDISK_URL });
+      } catch (error) {
+        json(res, 500, { ok: false, code: 'OPEN_URL_FAILED', error: `打开浏览器失败：${String(error?.message ?? error).slice(0, 120)}`, hint: `手动打开：${NETDISK_URL}`, url: NETDISK_URL });
+      }
+      return;
+    }
     // 参考音频“下载”在 Electron/新窗口里会没反应（target=_blank 被宿主拦截），
     // 改为打开包内 voicepack 目录并选中文件；插件侧直接做，不走桥接代理。
     if (url.pathname === `${API_PREFIX}/voice/packs/sample-open`) {

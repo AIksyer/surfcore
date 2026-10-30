@@ -4,6 +4,17 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.7.10] - 2026-10-30
+
+### 新增（语音页网盘离线包入口）
+
+- 两张语音包卡片下方加总说明：**本地包 / 云端包都适用**——网络不稳定装不上时，用网盘下载离线包，
+  解压后点卡片上的「导入离线包…」，选择解压出来的 `voice-local` / `voice-cloud` 文件夹。
+- 新增按钮「打开网盘下载（提取码 sxUZ）」：走宿主 `POST /voice/packs/netdisk` 用系统浏览器打开
+  （Electron 会拦 `target=_blank`）；链接写死在后端，不接受用户输入；打不开时自动复制链接兜底。
+- 契约测试钉住链接、文案与按钮，防止以后被误删。
+
+
 ## [0.7.9] - 2026-10-30
 
 ### 修复（zip 安装的自动更新 100% 失败：verify.staging-mismatch）

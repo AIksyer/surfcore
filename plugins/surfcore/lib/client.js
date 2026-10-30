@@ -3637,6 +3637,23 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
         finally { setBusyId(""); }
       };
 
+      // 网盘离线包：Electron 里新窗口会被拦，交给宿主用系统浏览器打开；失败则复制链接兜底。
+      const NETDISK_URL = "https://pan.quark.cn/s/ec6cf2b123de?pwd=sxUZ";
+      const copyNetdisk = async () => {
+        try { await navigator.clipboard.writeText(NETDISK_URL); if (toast) toast("✓ 网盘链接已复制（提取码 sxUZ）"); }
+        catch (e) { if (toast) toast(`复制失败：${e.message}；链接：${NETDISK_URL}`); }
+      };
+      const openNetdisk = async () => {
+        try {
+          const r = await api("/voice/packs/netdisk", { method: "POST" });
+          if (r.ok) { if (toast) toast("✓ 已用浏览器打开网盘（提取码 sxUZ）"); return; }
+          if (toast) toast(`✗ ${r.error || "打不开浏览器"}${r.hint ? `；${r.hint}` : ""}`);
+        } catch (e) {
+          if (toast) toast(`✗ ${e.message}`);
+        }
+        await copyNetdisk();
+      };
+
       const act = async (id, action, body) => {
         setBusyId(id);
         setMsg((m) => ({ ...m, [id]: action === "install" ? "开始安装…" : "处理中…" }));
@@ -3789,6 +3806,14 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           switchMsg ? h("div", { style: { fontSize: "12px", marginTop: "6px", opacity: 0.85 } }, switchMsg) : null,
           h("div", { style: { fontSize: "12px", opacity: 0.65, marginTop: "6px" } }, "只能运行一个；切换会自动停掉另一个。")),
         packs.map(card),
+        h("div", { style: { marginTop: "10px", padding: "10px 12px", borderRadius: "10px", border: "1px solid rgba(230,162,60,.45)", background: "rgba(230,162,60,.08)" } },
+          h("div", { style: { fontSize: "13px", fontWeight: 600 } }, "网络不稳定装不上？用网盘下载离线包（本地包 / 云端包都适用）"),
+          h("div", { style: { fontSize: "12px", opacity: 0.85, marginTop: "2px" } },
+            "网盘里是完整的离线包。下载解压后，点对应卡片的「导入离线包…」，选择解压出来的 voice-local 或 voice-cloud 文件夹；导入会校验文件、保留旧包备份，失败会告诉你缺什么。"),
+          h("div", { style: { display: "flex", gap: "8px", marginTop: "8px", flexWrap: "wrap", alignItems: "center" } },
+            h(Btn, { onClick: openNetdisk }, "打开网盘下载（提取码 sxUZ）"),
+            h(Btn, { kind: "qbw-btn2", onClick: copyNetdisk }, "复制链接"),
+            h("span", { style: { fontSize: "12px", opacity: 0.7 } }, "装完仍要按卡片提示启动/填密钥"))),
 
         h("div", { style: { marginTop: "10px", padding: "10px 12px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "10px" } },
           h("div", { style: { fontSize: "13px", fontWeight: 600 } }, "下载链路"),

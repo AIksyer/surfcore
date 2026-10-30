@@ -372,4 +372,11 @@ assert.ok(!/h\(VoiceTab, \{ toast \}\)/.test(source), 'VoiceTab 不能收裸 toa
 assert.ok(source.includes('const [toastText, setToastText]'), '浮层文案状态应叫 toastText（避免与 notify 混淆）');
 assert.ok(source.includes('if (tab === "voice") return h(VoiceTab, { toast: notify });'), '语音页接线固定为 toast: notify');
 
+// ── 语音页网盘离线包入口（2026-10-30 用户要求：网络不稳时可走网盘）──
+assert.ok(source.includes('https://pan.quark.cn/s/ec6cf2b123de?pwd=sxUZ'), '语音页必须包含网盘链接');
+assert.ok(source.includes('网络不稳定装不上？用网盘下载离线包（本地包 / 云端包都适用）'), '必须说明本地包/云端包都适用');
+assert.ok(source.includes('打开网盘下载（提取码 sxUZ）'), '必须有「打开网盘下载」按钮');
+assert.ok(source.includes('复制链接'), '必须有复制链接兜底');
+assert.ok(source.includes('api("/voice/packs/netdisk"'), '按钮必须走后端打开（Electron 会拦新窗口）');
+
 console.log('client contract tests OK');
