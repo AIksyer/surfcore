@@ -4,6 +4,28 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.7.20] - 2026-10-31
+
+### 修复（SnowLuma 断线时主动唤醒空烧 token）
+
+- `sendWakePromptV2` 最前面加 QQ 发送通道闸门：SnowLuma WS 未连接/最近发送失败 →
+  **不创建 DSH 会话、不投 prompt、不跑模型**，日志只写一次/10 分钟；
+- `sendToQQ` / `onebotSend` 记录成功/失败；连续 3 次失败 → 该会话自动唤醒暂停 30 分钟，
+  `scheduleProactiveCheckV2` 不再排下一次；
+- SnowLuma `close` 发 L2 `send-channel-down`，`open` 发 L1 恢复；首次发送失败 L1；
+- UI SnowLuma 安装卡显示断线原因和下一步；事件中心弹窗给“启动/重启 SnowLuma，
+  确认 3000/3001”的建议；
+- 未做首次 HTTP 失败预知、`wasted` 精确金额、端口/进程体检。
+
+### 修复（语音包被误放进 zip 自动更新）
+
+- 语音包（本地/云端）从 `updates.components()` 移除：它是离线运行时/模型/vendor 包，
+  不是代码 zip；通用 `updateFromZip` 的 `surfcore-*` + `package.json` + 安装清单规则必然失败；
+- 语音页新增说明：语音包不参与「检查更新」，需要新版本时用「重新导入离线包」，
+  导入保留 config.toml / .venv / models / vendor；
+- 未做语音包自动版本检查/通知；以后另做独立手动更新通道。
+
+
 ## [0.7.19] - 2026-10-30
 
 ### 新增（插件冲突体检）

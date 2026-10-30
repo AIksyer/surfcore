@@ -2929,3 +2929,47 @@ QQ 会话的 `qq-tool-restrict` 不认识这些工具，执行期拒绝。模型
 
 **验证**：`node scripts/test-gate-events.mjs`；`npm run test:audit` 88/88；
 `plugins/surfcore npm test`。
+
+## #90（2026-10-30）SnowLuma 断线，主动唤醒仍跑完整 LLM 空烧
+
+**现象**：SnowLuma 未启动/掉线时，`proactiveCheck` 仍创建会话、跑完整模型、最后发送失败；
+失败只写 bridge.log，每 40–90 分钟重复，用户无感知。
+
+**根因**：
+1. `sendWakePromptV2` 的 guard 只查 socialV2 开关/暂停/鱼群/token/繁忙/限频；
+2. 没有检查 `snowlumaHealth.connected` / 最近发送失败；
+3. 发送失败只记 `lastSendFailed`，没有跨回合失败计数/挂起；
+4. 失败消耗没有 UI/事件，只有日志。
+
+**修法**：
+- `sendWakePromptV2` 最前面 `qqSendChannelStatus()`：WS 未连接或最近发送失败 → return，
+  不 `ensureSession`、不投 prompt；
+- `sendToQQ` / `onebotSend` 记录成功/失败；连续 3 次失败把会话 `wakeSuspendedUntil`
+  写进 `social-v2.json`，`scheduleProactiveCheckV2` 暂停排期；
+- SnowLuma `close` 写 L2 `send-channel-down`，`open` 写 L1 恢复；`send-failed` 首次 L1；
+- UI SnowLuma 安装卡显示 `diagnosis.hint`；事件中心弹窗给“启动/重启 SnowLuma，
+  确认 3000/3001”的建议。
+
+**未做**：首次 HTTP 失败的预知、`wasted` 精确金额标记、端口/进程体检。
+
+**验证**：`node scripts/test-snowluma-channel-gate.mjs`（断开/暂停不创建 DSH 会话，
+恢复后创建）；`npm run test:audit` 89/89。
+
+## #91（2026-10-30）语音包被塞进 zip 自动更新 → 永远无法自动更新
+
+**现象**：语音包（surfvoicelocal / surfvoicecloud）在更新面板显示有更新，点更新下载后失败
+`verify.bad-archive`；用户以为“补 package.json 就能修”。
+
+**根因**：
+- `updates.components()` 把语音包登记成 `kind:auto`，走通用 `updateFromZip()`；
+- 该方法硬编码 `surfcore-*` 根目录 + `package.json` + `release/install-manifest.json`；
+- 语音包只有 `version.json` / `models.json` / `config.example.toml`，是离线运行时/模型/vendor 包；
+- 只补 `package.json` 仍过不了根目录、清单、配置保留三关。
+
+**修法**：语音包从自动更新列表移除；语音页明确“不参与检查更新，需要新版本时用
+重新导入离线包”，导入事务保留 config/venv/models/vendor。
+
+**未做**：语音包自动版本检查/通知；需要时另做独立手动更新通道，不复用 `updateFromZip`。
+
+**验证**：`plugins/surfcore npm test`（test-updates-voice 钉住不再登记 surfvoice 组件 +
+语音页说明）；`npm run test:audit` 89/89。

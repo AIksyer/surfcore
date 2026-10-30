@@ -257,21 +257,11 @@ export function apply(ctx) {
       const updCfg = readUnified().config?.updates ?? {};
       // 1) SurfCore 本体：源码树，走 git
       list.push({ id: 'surfcore', name: 'SurfCore 本体', dir: QQBOT_ROOT, kind: 'git', branch: 'main', versionRepo: 'Mieksido/surfcore' });
-      // 2) 语音包（bridge 管理的安装目录；config.json 的 voicePacks.dir 可覆盖）
-      //    是 git clone 就走 git；不是则看有没有配版本清单（updates.voice.*VersionUrl）
-      try {
-        const qqCfg = readQqConfig().config ?? {};
-        const packsDir = String(qqCfg?.voicePacks?.dir || path.join(QQBOT_ROOT, 'state', 'voice-packs'));
-        const voice = updCfg.voice ?? {};
-        list.push({
-          id: 'surfvoice-local', name: '语音包（本地）', dir: path.join(packsDir, 'voice-local'),
-          kind: 'auto', branch: 'main', versionUrl: voice.localVersionUrl || '', versionRepo: 'Mieksido/surfvoicelocal',
-        });
-        list.push({
-          id: 'surfvoice-cloud', name: '语音包（云端）', dir: path.join(packsDir, 'voice-cloud'),
-          kind: 'auto', branch: 'main', versionUrl: voice.cloudVersionUrl || '', versionRepo: 'Mieksido/surfvoicecloud',
-        });
-      } catch {}
+      // 2) 语音包**不进入自动更新列表**：它是离线运行时/模型/vendor 包，
+      //    不是 SurfCore 那种代码 zip；统一 updateFromZip 会按 surfcore-* + package.json
+      //    解析而必然失败（2026-10-30 用户反馈）。需要新包时在「语音」页重新导入离线包，
+      //    由 voice-pack-import 保留 config.toml / .venv / models / vendor。
+      //    语音包自己的 version.json / models.json 仍由语音页/包管理读取。
       // 3) 桌宠：构建产物，走版本清单（zip 安装包）；更新交给 petService.updateFromZip（保留 data/）
       try {
         const st = petService.status();

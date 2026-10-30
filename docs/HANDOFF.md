@@ -9,8 +9,8 @@
 
 ### 当前事实
 
-- **HEAD**：`3a82618 feat(guard): 闸门事件中心与单轮 L3 止血`（其后只有发布队列文档提交）
-- **package.json version**：`0.7.18`（编辑会话未改版本）
+- **HEAD**：`44bae2d fix(updates): 语音包退出 zip 自动更新`（0.7.19 后）
+- **package.json version**：`0.7.19`（编辑会话未改版本）
 - **工作区**：干净（`git status --porcelain` 无输出）
 - 本会话上一段（10-29）的离线导入、中文路径、管理员称呼修复均已进 v0.7.0–v0.7.4。
 
@@ -41,18 +41,33 @@
   → `cancelTurn` + 直接 QQ 通知；概览「安全提醒」卡，L2/L3 弹窗。
 - 本版**未做**单轮费用上限、端口/进程归属、L0/L1 全量生产者接入；报告/文档已标。
 
+### 本次新增（2026-10-30 19:30，0.7.19 后）
+
+- **SnowLuma 断线通道闸门**：`sendWakePromptV2` 开头检查 WS/最近发送失败，不健康就不创建
+  DSH 会话；`sendToQQ`/`onebotSend` 记录成功/失败，连续 3 次失败暂停该会话自动唤醒 30 分钟；
+- SnowLuma `close` 写 L2 `send-channel-down`，`open` 写 L1 恢复；UI SnowLuma 卡显示
+  `diagnosis.hint`，事件中心弹窗给“启动/重启 SnowLuma，确认 3000/3001”的建议；
+- 新增 `test-snowluma-channel-gate`；本批仍未做 `wasted` 精确金额/端口进程体检。
+
+### 本次新增（2026-10-30 23:30，0.7.19 后）
+
+- **语音包退出自动更新**：`updates.components()` 不再登记 `surfvoice-local/cloud`；
+  语音包是离线运行时/模型/vendor 包，不走通用 `updateFromZip`；
+- 语音页加说明：需要新版本时用「重新导入离线包」，导入保留 config/venv/models/vendor；
+- `test-updates-voice` 钉住“不再登记语音包 + 页面说明”。
+
 ### 已验证（本会话，2026-10-30）
 
-- `npm run test:audit` → **88/88**（新增 test-plugin-compat / test-gate-events）；
-- `node scripts/test-plugin-compat.mjs` / `node scripts/test-gate-events.mjs` → 通过（工具拒绝、压缩接管、未知插件、L0–L3、步数/重复错误/额度止血）。
+- `npm run test:audit` → **89/89**（新增 test-snowluma-channel-gate）；
+- `test-plugin-compat` / `test-gate-events` / `test-snowluma-channel-gate` → 通过（工具拒绝、压缩接管、L0–L3、断开/暂停不创建 DSH 会话）。
 - `plugins/surfcore npm test` → **全绿**；
 - 本次新增 `test-plugin-compat` / `test-gate-events`；并修了 3 个 0.7.5 blocked 语义后的过时夹具（`test-updates-version/pending/voice`）。
 
 ### 没验证 / 当前待办
 
 - **v0.7.18 的 B站 扫码/登录核查/长 UID 没有在本会话逐项实机复测**；以发布说明和发布会话验证为准。
-- **插件体检按钮/L2-L3 安全弹窗还没有在真实设置页点过**；`scanPluginCompatibility` 已用真实 desktop profile 跑过，
-  UI 弹窗/复制/重新体检/真实回合 cancel 需重启 DSH 后手测。
+- **插件体检按钮/L2-L3 安全弹窗/SnowLuma 断线提示还没有在真实设置页点过**；
+  真实回合 cancel、SnowLuma 断线零 token 增长需重启 DSH 后手测。
 - **语音离线包导入 UI 仍没在真实设置页点过**（确认框/错误弹窗/删源/删备份）；真实 7.9G 导入已跑通。
 - 语音包许可仍未定：piper GPL、huayan 数据集、age12 微调权重；候选包在 `D:\surfcore-poc\release\`，
   **不要当公开包直接上传**。

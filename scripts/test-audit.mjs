@@ -176,6 +176,8 @@ const tests = [
   'test-plugin-compat.mjs',
   // 闸门事件中心 + 单轮止血：L0-L3 分级、去重/确认、步数/重复错误/预算熔断。
   'test-gate-events.mjs',
+  // SnowLuma 断线/发送失败暂停：主动唤醒不得创建 DSH 会话（零 token）。
+  'test-snowluma-channel-gate.mjs',
   // B站分享去重：新鲜池空时不得回退旧素材（2026-10-26 修复的"同一条反复发"）。
   'test-bili-share-dedup.mjs',
 ];

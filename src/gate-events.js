@@ -71,6 +71,8 @@ export function classifyGateEvent(event = {}) {
   }
 
   if (kind === 'fault') {
+    if (/restored|recovered/i.test(name)) return 'L1';
+    if (/send-failed/i.test(name)) return 'L1';
     if (/security-unverified|guard-missing|config-corrupt/i.test(name)) return 'L3';
     if (/service-down|bridge-exit|port-conflict|duplicate-process/i.test(name)) return 'L2';
     return 'L2';

@@ -58,4 +58,10 @@ try {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+// 语音包是离线运行时/模型/vendor 包，不得再进通用自动更新列表（否则 updateFromZip 必然失败）。
+const indexSource = fs.readFileSync(path.resolve('lib/index.js'), 'utf8');
+assert.ok(!/id: 'surfvoice-local'/.test(indexSource), '语音包不得再登记为自动更新组件');
+const clientSource = fs.readFileSync(path.resolve('lib/client.js'), 'utf8');
+assert.ok(clientSource.includes('语音包不参与 SurfCore 的「检查更新」'), '语音页必须说明手动重新导入');
+
 console.log('✅ test-updates-voice 通过');

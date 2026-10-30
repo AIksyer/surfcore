@@ -11,6 +11,59 @@
 
 ## 待发布
 
+### 批次 2026-10-30 23:40 · 语音包退出 zip 自动更新（0.7.19 后）
+<!-- release-batch: start=2026-10-30T23:40+08:00 end=2026-10-30T23:50+08:00 commits=44bae2d -->
+
+**覆盖提交**：`44bae2d`
+**建议**：与 SnowLuma 通道闸门一起发 **0.7.20**
+
+**问题**：语音包没有 `package.json`，被登记为 `updates.components()` 的 `kind:auto`，
+下载后按 SurfCore 的 `surfcore-* + package.json + install-manifest` 解析，必然
+`verify.bad-archive`；补 `package.json` 也解决不了根目录/清单/config 保留。
+
+**修法**：
+- 语音包从自动更新列表移除；不再下载/尝试覆盖；
+- 语音页明确“不参与检查更新，需要新版本时用重新导入离线包”，
+  导入保留 config.toml / .venv / models / vendor；
+- 不改公开语音仓库，不写语音包专用 updater。
+
+**case**：[docs/cases/2026-10-30-voice-pack-no-auto-update.md](cases/2026-10-30-voice-pack-no-auto-update.md)
+**验证**：`plugins/surfcore npm test`（test-updates-voice 新增断言）；`npm run test:audit` 89/89。
+**交接**：同步 `plugins/surfcore/lib/index.js`、`plugins/surfcore/lib/client.js`、
+`plugins/surfcore/scripts/test-updates-voice.mjs`、docs、manifest；重启 DSH 后更新列表不再出现语音包。
+
+---
+
+### 批次 2026-10-30 19:30 · SnowLuma 断线通道闸门（0.7.19 后）
+<!-- release-batch: start=2026-10-30T19:30+08:00 end=2026-10-30T19:50+08:00 commits=44481cc -->
+
+**覆盖提交**：`44481cc`
+**建议**：patch → **0.7.20**（0.7.19 已发布，不重复发）
+
+**问题**：SnowLuma 未启动/掉线时，`proactiveCheck` 仍创建 DSH 会话、跑完整 LLM，
+发送失败只写 bridge.log，每 40–90 分钟重复空烧。
+
+**修法**：
+- `sendWakePromptV2` 开头检查 `qqSendChannelStatus()`：WS 未连接/最近发送失败 →
+  不创建 DSH 会话、不投 prompt、不跑模型；
+- `sendToQQ` / `onebotSend` 记录成功/失败；连续 3 次失败 → 该会话自动唤醒暂停 30 分钟，
+  `scheduleProactiveCheckV2` 不再排下一次；
+- SnowLuma `close` 写 L2 `send-channel-down`，`open` 写 L1 恢复；首次发送失败 L1；
+- UI SnowLuma 安装卡显示 `diagnosis.hint`；事件中心弹窗给“启动/重启 SnowLuma，
+  确认 3000/3001”的建议；
+- 新增 `test-snowluma-channel-gate`（断开/暂停不创建 DSH 会话，恢复后可创建）。
+
+**未做**：首次 HTTP 失败预知、`wasted` 精确金额、端口/进程体检。
+
+**case**：[docs/cases/2026-10-30-snowluma-channel-gate.md](cases/2026-10-30-snowluma-channel-gate.md)
+**验证**：`node scripts/test-snowluma-channel-gate.mjs`；`npm run test:audit` 89/89；
+`plugins/surfcore npm test`；`node scripts/test-audit-bridge.mjs`。
+**交接**：同步 `src/bridge.js`、`src/gate-events.js`、`plugins/surfcore/lib/client.js`、
+`scripts/test-snowluma-channel-gate.mjs`、`scripts/audit-bridge-harness.mjs`、manifest、docs。
+重启 DSH/桥接后生效；真实停 SnowLuma 观察零 token 增长需手测。
+
+---
+
 ### 批次 2026-10-30 17:20 · 闸门事件中心 + 单轮 L3 止血
 <!-- release-batch: start=2026-10-30T17:20+08:00 end=2026-10-30T17:35+08:00 commits=3a82618 -->
 

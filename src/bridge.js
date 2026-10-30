@@ -3685,12 +3685,136 @@ async function main() {
     goodCheckedAt: 0,
     degraded: false,      // 当前是否处于"已告警"状态（边沿触发，避免刷屏）
     reason: '',
+    lastSendOkAt: 0,      // 最近一次真实 QQ 发送成功
+    lastSendFailAt: 0,    // 最近一次真实 QQ 发送失败
+    lastSendError: '',
+    downNotified: false,  // 通道断开告警是否已发出（边沿触发）
   };
 
   /** 记录一次"上游还活着"的证据。任何来自 SnowLuma 的事件包都算（含心跳）。 */
   function noteUpstreamPacket(kind) {
     snowlumaHealth.lastPacketAt = Date.now();
     snowlumaHealth.lastPacketKind = String(kind ?? '');
+  }
+
+  // ── QQ 发送通道健康 / 跨回合失败抑制 ─────────────────────────────────────
+  // 主动唤醒是「先生成、后发送」：通道断着时，模型已经烧完 token 才发现发不出去。
+  // 所以门槛必须在 sendWakePromptV2 之前（不创建 DSH 会话），不在工具层。
+  const SEND_CHANNEL_SUSPEND_MS = 30 * 60 * 1000;
+
+  function qqSendChannelStatus() {
+    if (snowlumaHealth.connected !== true) {
+      return { ok: false, code: 'SNOWLUMA_OFFLINE', reason: 'SnowLuma WS 未连接' };
+    }
+    if (snowlumaHealth.lastSendFailAt > snowlumaHealth.lastSendOkAt
+      && Date.now() - snowlumaHealth.lastSendFailAt < 2 * 60 * 1000) {
+      return { ok: false, code: 'SEND_RECENTLY_FAILED', reason: `最近发送失败：${snowlumaHealth.lastSendError || '未知'}` };
+    }
+    return { ok: true };
+  }
+
+  function notifySendChannelDown(reason = '') {
+    if (snowlumaHealth.downNotified) return;
+    snowlumaHealth.downNotified = true;
+    const message = String(reason || 'SnowLuma 连接断开').slice(0, 300);
+    gateEvents.record({
+      gate: 'snowluma',
+      kind: 'fault',
+      event: 'send-channel-down',
+      action: 'blocked',
+      reason: { code: 'SNOWLUMA_OFFLINE', message },
+      impact: '当前无法把消息发到 QQ；自动唤醒已暂停，避免先生成后丢弃、白烧 token。',
+      recommendation: '启动或重启 SnowLuma（launcher.bat），确认 OneBot HTTP :3000 与 WS :3001 可用；恢复后会自动继续。',
+      confidence: 'confirmed',
+      dedupeKey: 'snowluma:send-channel-down',
+    });
+    log('❌ SnowLuma 发送通道不可用；自动唤醒已暂停，避免空烧 token。');
+    log('   处理：启动/重启 SnowLuma（launcher.bat），确认 HTTP :3000 与 WS :3001 可用；恢复后自动继续。');
+  }
+
+  function notifySendChannelUp() {
+    if (!snowlumaHealth.downNotified) return;
+    snowlumaHealth.downNotified = false;
+    gateEvents.record({
+      gate: 'snowluma',
+      kind: 'fault',
+      event: 'send-channel-restored',
+      action: 'allowed',
+      reason: { code: 'SNOWLUMA_RESTORED', message: 'SnowLuma 已重新连接' },
+      impact: '发送通道恢复，自动唤醒可以继续。',
+      recommendation: '无需操作。',
+      confidence: 'confirmed',
+      dedupeKey: 'snowluma:send-channel-restored',
+    });
+    log('✅ SnowLuma 发送通道已恢复，自动唤醒恢复。');
+    try {
+      for (const key of socialV2.conversations.keys()) {
+        const st = getSocialV2State(key);
+        st.sendFailureStreak = 0;
+        st.wakeSuspendedUntil = 0;
+        scheduleProactiveCheckV2(key);
+      }
+      saveSocialV2State();
+    } catch (error) {
+      log('[snowluma] 恢复唤醒调度失败：', String(error?.message ?? error).slice(0, 160));
+    }
+  }
+
+  function noteSendSuccess(key) {
+    snowlumaHealth.lastSendOkAt = Date.now();
+    snowlumaHealth.lastSendError = '';
+    try {
+      const st = getSocialV2State(key);
+      if (st.sendFailureStreak || st.wakeSuspendedUntil) {
+        st.sendFailureStreak = 0;
+        st.wakeSuspendedUntil = 0;
+        saveSocialV2State();
+        scheduleProactiveCheckV2(key);
+      }
+    } catch {}
+  }
+
+  function noteSendFailure(key, error) {
+    // 发送守卫/审计拒绝不是通道故障，不能拿它们去暂停唤醒。
+    if (/白名单|不在允许|审计|会话令牌|replyToMessageId|atUserId/.test(String(error?.message ?? error))) return;
+    snowlumaHealth.lastSendFailAt = Date.now();
+    snowlumaHealth.lastSendError = String(error?.message ?? error ?? '发送失败').slice(0, 200);
+    try {
+      const st = getSocialV2State(key);
+      st.sendFailureStreak = Number(st.sendFailureStreak || 0) + 1;
+      st.lastSendFailureAt = Date.now();
+      if (st.sendFailureStreak === 1) {
+        gateEvents.record({
+          gate: 'snowluma',
+          kind: 'fault',
+          event: 'send-failed',
+          action: 'blocked',
+          subject: { key },
+          reason: { code: 'SEND_FAILED', message: snowlumaHealth.lastSendError },
+          impact: '这次生成的内容没有发到 QQ；如果继续自动唤醒，会重复消耗 token。',
+          recommendation: '检查 SnowLuma/QQ 通道；连续 3 次失败会自动暂停自动唤醒。',
+          confidence: 'confirmed',
+          dedupeKey: `snowluma:send-failed:${key}`,
+        });
+      }
+      if (st.sendFailureStreak >= 3 && !(Number(st.wakeSuspendedUntil) > Date.now())) {
+        st.wakeSuspendedUntil = Date.now() + SEND_CHANNEL_SUSPEND_MS;
+        gateEvents.record({
+          gate: 'snowluma',
+          kind: 'fault',
+          event: 'wake-suspended-after-send-failures',
+          action: 'blocked',
+          subject: { key },
+          reason: { code: 'SEND_FAILURE_STREAK', message: `连续 ${st.sendFailureStreak} 次发送失败` },
+          impact: '该会话的自动唤醒已暂停 30 分钟，避免继续先生成后丢弃、白烧 token。',
+          recommendation: '检查 SnowLuma/QQ 通道；恢复或收到新消息后会自动解除。',
+          confidence: 'confirmed',
+          dedupeKey: `snowluma:send-fail:${key}`,
+        });
+        log(`⏸️ ${key} 连续 ${st.sendFailureStreak} 次发送失败；自动唤醒暂停 30 分钟，避免空烧。`);
+      }
+      saveSocialV2State();
+    } catch {}
   }
 
   /** 记下一次接收链路健康度。@param good - boolean；非布尔值忽略。 */
@@ -8502,9 +8626,11 @@ async function main() {
           assertSendAllowed();
           if (kind === 'private') await withTimeout(bot.sendPrivateMessage(Number(id), text(escapeCqText(part))), SEND_TIMEOUT_MS, `QQ发送 ${kind}:${id}`);
           else await withTimeout(bot.sendGroupMessage(Number(id), text(escapeCqText(part))), SEND_TIMEOUT_MS, `QQ发送 ${kind}:${id}`);
+          noteSendSuccess(key);
         })
         .catch((error) => {
           lastSendFailed.set(key, true);
+          noteSendFailure(key, error);
           log(`QQ 发送失败 (${key}):`, error?.message ?? error);
         })
         .then(() => sleep(cfg.sendDelayMs));
@@ -8736,20 +8862,30 @@ async function main() {
     const action = kind === 'private' ? 'send_private_msg' : 'send_group_msg';
     const params = kind === 'private' ? { user_id: Number(id), message: segments } : { group_id: Number(id), message: segments };
     const httpUrl = String(cfg.snowluma?.httpUrl || 'http://127.0.0.1:3000').replace(/\/+$/, '');
-    const res = await fetch(`${httpUrl}/${action}`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(cfg.snowluma?.accessToken ? { authorization: `Bearer ${cfg.snowluma.accessToken}` } : {})
-      },
-      body: JSON.stringify(params),
-      signal: AbortSignal.timeout(15000)
-    });
+    const sendKey = `${kind}:${id}`;
+    let res;
+    try {
+      res = await fetch(`${httpUrl}/${action}`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(cfg.snowluma?.accessToken ? { authorization: `Bearer ${cfg.snowluma.accessToken}` } : {})
+        },
+        body: JSON.stringify(params),
+        signal: AbortSignal.timeout(15000)
+      });
+    } catch (error) {
+      noteSendFailure(sendKey, error);
+      throw error;
+    }
     const body = await res.json().catch(() => ({}));
     if (!res.ok || body.status !== 'ok' || body.retcode !== 0) {
       const hint = res.status === 426 ? '（HTTP 426：snowluma.httpUrl 可能指向了 WebSocket 端口，请检查 config.json 的 snowluma.httpUrl 是否为 OneBot HTTP API 地址）' : '';
-      throw new Error(`OneBot ${action} 失败: ${body.wording || body.retcode || res.status}${hint}`);
+      const error = new Error(`OneBot ${action} 失败: ${body.wording || body.retcode || res.status}${hint}`);
+      noteSendFailure(sendKey, error);
+      throw error;
     }
+    noteSendSuccess(sendKey);
     return body.data;
   }
 
@@ -9705,6 +9841,10 @@ async function main() {
         lastHistoryCatchup: null,
         preSleepWaitSatisfiedAt: 0,
         preSleepWaitObservedAt: 0,
+        sendFailureStreak: 0,
+        wakeSuspendedUntil: 0,
+        lastSendFailureAt: 0,
+        channelGateLoggedAt: 0,
         preSleepWaitAccumMs: 0,
         lastUnreadSeq: 0,
         lastReadThroughSeq: 0,
@@ -9899,6 +10039,10 @@ async function main() {
           lastHistoryCatchup: st.lastHistoryCatchup && typeof st.lastHistoryCatchup === 'object' ? st.lastHistoryCatchup : null,
           preSleepWaitSatisfiedAt: st.preSleepWaitSatisfiedAt || 0,
           preSleepWaitObservedAt: st.preSleepWaitObservedAt || 0,
+          sendFailureStreak: st.sendFailureStreak || 0,
+          wakeSuspendedUntil: st.wakeSuspendedUntil || 0,
+          lastSendFailureAt: st.lastSendFailureAt || 0,
+          channelGateLoggedAt: st.channelGateLoggedAt || 0,
           preSleepWaitAccumMs: st.preSleepWaitAccumMs || 0,
           lastUnreadSeq: st.lastUnreadSeq || 0,
           lastReadThroughSeq: st.lastReadThroughSeq || 0,
@@ -12942,11 +13086,30 @@ async function main() {
   async function sendWakePromptV2(key, reason) {
     if (cfg.socialV2?.enabled === false) return;
     if (currentMode !== 'reserved2' || socialV2.paused) return;
+    const stForGuard = getSocialV2State(key);
+    const autoWake = ['proactiveCheck', 'timeout', 'replyCheck', 'history', 'bootstrap'].includes(String(reason));
+    const channel = qqSendChannelStatus();
+    if (!channel.ok) {
+      if (!stForGuard.channelGateLoggedAt || Date.now() - stForGuard.channelGateLoggedAt > 10 * 60 * 1000) {
+        stForGuard.channelGateLoggedAt = Date.now();
+        log(`[channel-gate] 跳过唤醒 ${key}（${reason}）：${channel.reason}；不创建 DSH 会话，避免空烧 token`);
+      }
+      return;
+    }
+    if (autoWake) {
+      if (Number(stForGuard.wakeSuspendedUntil) > Date.now()) {
+        if (!stForGuard.channelGateLoggedAt || Date.now() - stForGuard.channelGateLoggedAt > 10 * 60 * 1000) {
+          stForGuard.channelGateLoggedAt = Date.now();
+          log(`[channel-gate] 跳过唤醒 ${key}（${reason}）：发送失败后暂停中，约 ${Math.ceil((stForGuard.wakeSuspendedUntil - Date.now()) / 60000)} 分钟后重试`);
+        }
+        return;
+      }
+    }
     if (!isSessionAllowedInCurrentMode(key)) {
       log(`[reserved2] 跳过唤醒 ${key}（${reason}）：会话已不在当前模式允许范围内`);
       return;
     }
-    const st = getSocialV2State(key);
+    const st = stForGuard;
     // 鱼群保护：定时器/主动机会在保护期内不唤醒；只有人类 @/名字/提问/拍一拍且已记录 bypass 才放行。
     const bypass = st.fishGuardBypass && Number(st.fishGuardBypass.until) > Date.now()
       && Date.now() - Number(st.fishGuardBypass.at || 0) < 10 * 60 * 1000
@@ -13598,6 +13761,8 @@ async function main() {
     if (socialV2.paused || currentMode !== 'reserved2') return;
     if (!isSessionAllowedInCurrentMode(key)) return;
     const st = getSocialV2State(key);
+    if (Number(st.wakeSuspendedUntil) > Date.now()) return;
+    if (!qqSendChannelStatus().ok) return;
     if (st.proactiveTimer) return;
     const p = cfg.socialV2?.proactive ?? {};
     const min = Math.max(60 * 1000, Number(p.checkIntervalMinMs) || 30 * 60 * 1000);
@@ -15167,6 +15332,7 @@ async function main() {
     const connectedUrl = bot.url ?? cfg.snowluma.wsUrl;
     snowlumaHealth.connected = true;
     log(`SnowLuma 已连接：${connectedUrl}`);
+    notifySendChannelUp();
     // 「已连接」只说明与 SnowLuma 的 WebSocket 通了，**不说明 QQ 侧收得到消息** ——
     // 这个区别见 startSnowlumaWatch 的说明。这里顺手把上游健康快照刷一次。
     void pollSnowlumaStatus();
@@ -15289,6 +15455,7 @@ async function main() {
   bot.on('close', (info) => {
     snowlumaHealth.connected = false;
     log(`SnowLuma 连接断开（code=${info?.code ?? '?'}），重连中…`);
+    notifySendChannelDown(`SnowLuma 连接断开（code=${info?.code ?? '?'}）`);
     // 连不上时最常见的原因就是换了 QQ 账号 → token 变了；顺手自愈。
     // 注意 1006 在**每次启动**都可能出现一次：HTTP token 与 WS token 是两个不同的值，
     // config.json 里存的是前者，WS 需要用自愈发现的那个（详见 bot.connect() 处的说明）。
