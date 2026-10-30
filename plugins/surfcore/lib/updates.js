@@ -284,6 +284,9 @@ export async function inspectVersionComponent(component, { fetch: doFetch = true
   // 但还没有 .installed-manifest.json / .installed-meta.json → 就地补登记。
   // 否则手动覆盖安装的用户会永远卡在 evidence-insufficient（2026-10-29 反馈）。
   try {
+    // 只在"解压安装的目录"里补登记；git 工作副本（开发仓库）不要写这两个文件，
+    // 否则会把运行时证据混进仓库（2026-10-30 误提交过）。
+    if (fs.existsSync(path.join(dir, '.git'))) throw new Error('skip-git-worktree');
     const pkgManifest = path.join(dir, 'release', 'install-manifest.json');
     const installedManifest = path.join(dir, '.installed-manifest.json');
     if (installedVersion && fs.existsSync(pkgManifest)) {
@@ -291,7 +294,17 @@ export async function inspectVersionComponent(component, { fetch: doFetch = true
       try { installedManifestVersion = String(JSON.parse(fs.readFileSync(installedManifest, 'utf8')).version ?? ''); } catch {}
       // 手动覆盖安装后，旧清单/旧提交号还留在目录里 → 会拿"旧提交 vs 远端"比出假更新
       // （用户升到 0.7.5 仍被提示 v0.7.3→db18896）。版本对不上就地刷新证据。
-      const stale = !installedManifestVersion || installedManifestVersion !== installedVersion;
+      let stale = !installedManifestVersion || installedManifestVersion !== installedVersion;
+      if (!stale) {
+        // 旧清单可能是"开发工作目录"生成的（含 _backups/、audio/ 等归档里没有的路径）：
+        // 只要出现"新包没有的路径"，就说明旧清单不可信，必须用包内清单覆盖。
+        try {
+          const pkgFiles = Object.keys(JSON.parse(fs.readFileSync(pkgManifest, 'utf8')).files ?? {});
+          const instFiles = Object.keys(JSON.parse(fs.readFileSync(installedManifest, 'utf8')).files ?? {});
+          const pkgSet = new Set(pkgFiles);
+          if (instFiles.some((rel) => !pkgSet.has(rel))) stale = true;
+        } catch {}
+      }
       if (stale) {
         fs.copyFileSync(pkgManifest, installedManifest);
         // 版本变了，旧 sha 已不代表当前文件；写回只有版本号的记录（走版本号比对）
@@ -323,9 +336,16 @@ export async function inspectVersionComponent(component, { fetch: doFetch = true
   if (remoteSha) {
     const localSha = String(meta?.sha ?? '');
     if (localSha && localSha !== remoteSha) {
+      // 按提交判定"有更新"时，再尽量取一个**版本号**：前端显示版本、下载 tag 归档都要用它。
+      // 用 releases/latest 的 302（不消耗 API 配额）；取不到才退回提交号。
+      let ver = remoteVer;
+      if (!ver) {
+        const tag = await fetchLatestByRedirect(repo).catch(() => null);
+        if (tag?.tag) ver = String(tag.tag).replace(/^v/i, '');
+      }
       return {
         ...base, available: true, installedVersion: installedVersion || localSha.slice(0, 7),
-        latestVersion: remoteVer || remoteSha.slice(0, 7), updateAvailable: true,
+        latestVersion: ver || remoteSha.slice(0, 7), updateAvailable: true,
         remoteSha, localSha, channel: 'version',
         status: 'update', code: 'new-commit',
         reason: `远端有新提交（${localSha.slice(0, 7)} → ${remoteSha.slice(0, 7)}）`,
@@ -821,7 +841,7 @@ export async function downloadReleaseAsset(component, report, { stateDir, plugin
 export function createUpdatesService({ stateDir, components, blockedReason = () => '', pluginLog = () => {}, githubToken = () => '' }) {
   const file = path.join(stateDir, 'updates.json');
   const now = () => Date.now();
-  let state = { dismissed: {}, lastCheckAt: 0, results: [], lastError: '' };
+  let state = { dismissed: {}, lastCheckAt: 0, results: [], lastError: '', lastApplyFailure: null };
   try {
     const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (raw && typeof raw === 'object') {
@@ -830,6 +850,7 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
         lastCheckAt: Number(raw.lastCheckAt) || 0,
         results: Array.isArray(raw.results) ? raw.results : [],
         lastError: String(raw.lastError ?? ''),
+        lastApplyFailure: raw.lastApplyFailure && typeof raw.lastApplyFailure === 'object' ? raw.lastApplyFailure : null,
       };
     }
   } catch { /* 第一次跑 / 文件坏了：用默认值，不炸 */ }
@@ -907,12 +928,18 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
   /** 校验解压出来的包和清单一致（防止"清单是好的、包被换过"） */
   function verifyStaging(srcDir, manifest) {
     const bad = [];
+    const missing = [];
+    let checked = 0;
     for (const [rel, want] of Object.entries(manifest.files)) {
       const file = path.join(srcDir, rel);
-      if (!fs.existsSync(file) || hashFile(file) !== want) bad.push(rel);
-      if (bad.length >= 5) break;
+      if (!fs.existsSync(file)) { missing.push(rel); continue; }
+      checked += 1;
+      if (hashFile(file) !== want) {
+        bad.push(rel);
+        if (bad.length >= 5) break;
+      }
     }
-    return bad;
+    return { bad, missing, checked };
   }
 
   /**
@@ -1022,7 +1049,7 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
       results,
       pending,
       pendingCount: pending.length,
-      lastApply: readLastApply(),
+      lastApply: state.lastApplyFailure ?? readLastApply(),
       githubTokenConfigured: githubTokenConfigured(),
       showPrompt: pending.length > 0,
     };
@@ -1145,16 +1172,28 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
     const dir = normalizeDir(item.dir);
     const repo = String(item.versionRepo ?? '').trim();
     if (!dir || !repo) {
-      return {
+      return fail({
         ok: false, status: 'failed', stage: 'stage', code: 'apply.no-target',
         reason: '缺少安装目录或版本仓库，无法更新',
         hint: '在设置页确认安装目录后重试',
-      };
+      });
     }
-    const url = String(item.archiveUrl ?? `https://github.com/${repo}/archive/refs/heads/main.zip`);
+    // 有版本号就用 **tag 归档**：分支（main.zip）会随提交漂移，和"某版本的清单"天然对不上。
+    // 没有版本号（语音包等按提交追踪的组件）才退回 main.zip。
+    const wantVer = String(report?.latestVersion ?? '').trim();
+    const isSemver = /^\d+\.\d+\.\d+$/.test(wantVer);
+    const url = String(item.archiveUrl
+      || (isSemver
+        ? `https://github.com/${repo}/archive/refs/tags/v${wantVer}.zip`
+        : `https://github.com/${repo}/archive/refs/heads/main.zip`));
     const stamp = String(Date.now());
     const stagingRoot = path.join(stateDir, 'staging', `${item.id}-${stamp}`);
     fs.mkdirSync(stagingRoot, { recursive: true });
+    // 失败即清理：以前失败会留一个 11.8MB 的 staging 目录，点几次就上百 MB（2026-10-30 反馈）
+    const fail = (obj) => {
+      try { fs.rmSync(stagingRoot, { recursive: true, force: true }); } catch {}
+      return obj;
+    };
     const zipFile = path.join(stagingRoot, 'pkg.zip');
     try {
       pluginLog(`[updates] 下载 ${url}`);
@@ -1163,30 +1202,30 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
         res = await fetch(url, { signal: AbortSignal.timeout(180_000) });
       } catch (error) {
         const aborted = /abort|timeout/i.test(String(error?.name ?? error?.message ?? error));
-        return {
+        return fail({
           ok: false, status: 'failed', stage: 'download',
           code: aborted ? 'download.timeout' : 'download.network',
           reason: aborted ? '下载超时（180 秒）' : `下载失败：${String(error?.message ?? error).slice(0, 160)}`,
           hint: '检查网络后重试；持续失败可手动下载安装包',
           retryable: true,
-        };
+        });
       }
       if (!res.ok) {
-        return {
+        return fail({
           ok: false, status: 'failed', stage: 'download', code: `download.http-${res.status}`,
           reason: `下载失败：服务器返回 HTTP ${res.status}`,
           hint: res.status === 404 ? '这个版本可能已被撤下，稍后重试或手动下载' : '稍后重试；持续失败可手动下载安装包',
           retryable: true,
-        };
+        });
       }
       try {
         fs.writeFileSync(zipFile, Buffer.from(await res.arrayBuffer()));
       } catch (error) {
-        return {
+        return fail({
           ok: false, status: 'failed', stage: 'download', code: 'download.write-failed',
           reason: `下载内容写入失败：${String(error?.message ?? error).slice(0, 160)}`,
           hint: '检查磁盘空间与目录权限后重试',
-        };
+        });
       }
 
       try {
@@ -1196,42 +1235,47 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
           { windowsHide: true, timeout: 120_000 }, (error) => (error ? reject(error) : resolve()));
         });
       } catch (error) {
-        return {
+        return fail({
           ok: false, status: 'failed', stage: 'verify', code: 'verify.unzip-failed',
           reason: `安装包解压失败：${String(error?.message ?? error).slice(0, 160)}`,
           hint: '安装包可能损坏：重试一次；仍失败请手动下载',
           retryable: true,
-        };
+        });
       }
 
       const entries = fs.readdirSync(stagingRoot, { withFileTypes: true }).filter((d) => d.isDirectory() && /^surfcore-/.test(d.name));
       const src = entries.length ? path.join(stagingRoot, entries[0].name) : '';
       if (!src || !fs.existsSync(path.join(src, 'package.json'))) {
-        return {
+        return fail({
           ok: false, status: 'failed', stage: 'verify', code: 'verify.bad-archive',
           reason: '解压后没有找到仓库根目录（package.json 不存在）',
           hint: '这个包可能不是 SurfCore 安装包：请手动下载正式包',
-        };
+        });
       }
 
       // ── 覆盖前预检：没有安装清单 / 包被换过 / 本地改过 → 一律阻止（不覆盖） ──
       const pkg = readPackageManifest(src);
       if (!pkg.ok) {
-        return {
+        return fail({
           ok: false, status: 'blocked', stage: 'verify', code: pkg.code,
           reason: pkg.code === 'manifest-missing'
             ? '这个版本没有安装清单（release/install-manifest.json），无法确认覆盖哪些文件'
             : '安装清单格式不对，无法确认覆盖范围',
           hint: '按官方 Release 页面手动下载并覆盖；或等下一个带清单的版本',
-        };
+        });
       }
-      const stagingBad = verifyStaging(src, pkg.manifest);
-      if (stagingBad.length) {
-        return {
+      const stagingCheck = verifyStaging(src, pkg.manifest);
+      if (stagingCheck.missing.length) {
+        // 归档里少了清单中的文件：旧清单/分支差异；不判失败，但要留痕（诊断里可见）
+        pluginLog(`[updates] ${item.id} 校验：清单 ${stagingCheck.missing.length} 个文件在包内缺失（${stagingCheck.missing.slice(0, 3).join('、')}…）`);
+      }
+      if (stagingCheck.bad.length) {
+        return fail({
           ok: false, status: 'failed', stage: 'verify', code: 'verify.staging-mismatch',
-          reason: `安装包与清单不一致（${stagingBad.join('、')}…）`,
+          reason: `安装包与清单不一致（${stagingCheck.bad.join('、')}…）`,
           hint: '包可能损坏或被替换：重新下载；持续失败请手动下载',
-        };
+          diagnostics: { checked: stagingCheck.checked, mismatch: stagingCheck.bad.length, missing: stagingCheck.missing.length },
+        });
       }
       let priorFiles = null;
       try {
@@ -1240,19 +1284,19 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
       } catch {}
       const hasMeta = fs.existsSync(path.join(dir, '.installed-meta.json'));
       if (!priorFiles && !hasMeta) {
-        return {
+        return fail({
           ok: false, status: 'blocked', stage: 'preflight', code: 'evidence-insufficient',
           reason: '这个安装既没有安装清单也没有安装记录，无法确认目录归属',
           hint: '为安全起见不自动覆盖：请按官方 Release 手动下载；装一次新版后即可恢复自动更新',
-        };
+        });
       }
       const plan = planOverwrite(dir, pkg.manifest, priorFiles);
       if (plan.modified.length) {
-        return {
+        return fail({
           ok: false, status: 'blocked', stage: 'preflight', code: 'local-modifications',
           reason: `这些文件被本地改过，覆盖会丢掉改动：${plan.modified.slice(0, 5).join('、')}${plan.modified.length > 5 ? ` 等 ${plan.modified.length} 个` : ''}`,
           hint: '先备份/还原这些文件，或手动下载新版覆盖',
-        };
+        });
       }
 
       const txn = `${item.id}-${stamp}`;
@@ -1261,11 +1305,11 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
         manifest: pkg.manifest.version ?? '',
       });
       if (!backup.ok) {
-        return {
+        return fail({
           ok: false, status: 'failed', stage: 'backup', code: backup.code,
           reason: backup.reason,
           hint: '检查磁盘空间与 state/backups 权限后重试；备份失败不会覆盖任何文件',
-        };
+        });
       }
 
       const staged = stageDeferredApply({
@@ -1275,11 +1319,11 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
         meta: { version: String(report?.latestVersion ?? ''), sha: String(report?.remoteSha ?? '') },
       });
       if (!staged.ok) {
-        return {
+        return fail({
           ok: false, status: 'failed', stage: 'stage', code: staged.code ?? 'stage.failed',
           reason: staged.reason ?? '更新助手没有启动',
           hint: '重启 DSH 后重试；或手动下载 zip 覆盖安装',
-        };
+        });
       }
       pluginLog(`[updates] ${item.id} 已暂存 v${report?.latestVersion ?? '?'}，等 DSH 退出后应用（pid=${staged.pid ?? '?'}）`);
       return {
@@ -1440,6 +1484,18 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
         }
         persist();
       } catch {}
+      const failedNow = results.filter((row) => !row.ok);
+      state.lastApplyFailure = failedNow.length
+        ? {
+          status: 'failed',
+          code: failedNow[0].code ?? 'apply.failed',
+          component: failedNow[0].id,
+          reason: failedNow[0].reason ?? failedNow[0].error ?? '更新失败',
+          hint: failedNow[0].hint ?? '',
+          at: new Date().toISOString(),
+        }
+        : null;
+      persist();
       const changed = results.filter((row) => row.ok && !row.skipped);
       const pendingRestart = results.filter((row) => row.status === 'pending_restart').length;
       const failed = results.filter((row) => !row.ok);

@@ -4,6 +4,26 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.7.9] - 2026-10-30
+
+### 修复（zip 安装的自动更新 100% 失败：verify.staging-mismatch）
+
+- **根因**：`release-manifest.mjs` 扫的是开发工作目录，把 gitignore 的 `_backups/`、`audio/`、
+  本地改过的 docs 都列进清单；用户下载的 GitHub 归档不可能包含这些文件。而
+  `verifyStaging()` 要求清单里**每个文件都存在且哈希一致** → 恒假 → 永远到不了暂存。
+- **修法**：
+  - 清单只列 `git ls-files`（归档里有什么就列什么）；工作区脏时生成脚本报错；
+  - 有版本号时下载 **tag 归档**（`refs/tags/vX.Y.Z.zip`），不再用会漂移的 `main.zip`；
+  - 校验改为**交集**：只比包内真实存在的文件；缺失只计数记日志，不判失败；
+  - 旧脏清单自愈：出现“新包没有的路径”就用包内清单覆盖安装记录（git 工作副本跳过）；
+  - 按提交判定有更新时用 302 补取版本号（显示与 tag 下载都需要）。
+- **失败可见**：`state.lastApplyFailure` 持久化，弹窗内常驻红块（code/原因/建议/复制诊断/去下载新版）；
+  失败即删除本次 staging，不再累积。
+
+> 注意：0.7.1–0.7.8 的 zip 用户**无法自动升到本版**（旧版仍执行旧校验），需手动覆盖一次。
+> 调查记录：[zip 更新 verify.staging-mismatch](docs/cases/2026-10-30-update-verify-staging-mismatch.md)
+
+
 ## [0.7.8] - 2026-10-29
 
 ### 修复（语音页保存显示「toast is not a function」，其实已保存）

@@ -2838,3 +2838,12 @@ Node 读文件后删除；不再解析 stdout。所有「浏览…」共用此�
 「管理员是身份不是称呼」；插件启动时 `ensureAdminProjection()` 补投影，
 桥接在跑则自动重启；补单测钉住 qq.admin.displayName 与无称呼提示词。
 **验证**：`test-admin-identity`、`test-admin-prompt-wiring`、`test:audit`。
+
+## 安装清单从开发目录生成 → zip 更新 100% 失败
+
+- **现象**：点更新反复失败、版本不变；只有 4 秒 toast；没有 pending、没有助手进程。
+- **根因**：`release-manifest.mjs` 扫工作目录（含 `_backups/`、`audio/`、本地改过的 docs），
+  与 GitHub 归档天然不一致；`verifyStaging` 又要求清单文件全部存在且哈希一致 → 恒假。
+- **修法**（0.7.9）：清单只列 `git ls-files`（工作区脏则报错）；有版本号时下载 tag 归档；
+  校验改交集（只比存在的文件）；旧脏清单自愈；失败常驻可见；失败清 staging。
+- **教训**：**制品和校验清单必须由同一次发布流程产出**；校验规则不能假设“两边完全相等”。

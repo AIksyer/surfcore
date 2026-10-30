@@ -33,6 +33,13 @@ cd plugins/surfcore && npm test # 必须 0 失败
 
 ## 三、发布步骤
 
+0. **先提交、再生成清单**（2026-10-30 事故）：
+   ```bash
+   git status --porcelain        # 必须干净
+   node scripts/release-manifest.mjs   # 只列 git 跟踪文件；工作区脏时脚本会报错退出
+   ```
+   清单必须与 GitHub 归档内容一致，否则客户端校验会失败、自动更新全部不可用。
+
 1. **bump**（用户给定版本号时，检查是否与 `version.mjs` 建议一致）：
    ```bash
    node scripts/version.mjs bump patch   # 或 minor

@@ -1292,7 +1292,26 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
           h("label", { style: { display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" } },
             h("input", { type: "checkbox", checked: never, onChange: (e) => setNever(e.target.checked), disabled: working }),
             h("span", { className: "qbw-hint" }, "不再提示本次更新（只对这次的远端版本生效；有更新提交时会重新提醒）")),
-            working ? h(ProgressBar, { phase: "正在下载/应用更新…", indeterminate: true }) : null),
+            (() => {
+            const la = status?.lastApply;
+            if (!la || la.status !== "failed") return null;
+            return h("div", {
+              className: "qbw-err",
+              style: { marginTop: "6px", padding: "8px 10px", borderRadius: "8px", background: "rgba(192,57,43,.12)" },
+            },
+            h("div", { style: { fontWeight: 600 } }, `更新被阻止（${la.code || "failed"}）`),
+            h("div", { className: "qbw-hint", style: { marginTop: "2px" } }, la.reason || "原因不明"),
+            la.hint ? h("div", { className: "qbw-hint", style: { marginTop: "2px" } }, `建议：${la.hint}`) : null,
+            h("div", { style: { display: "flex", gap: "8px", marginTop: "6px", flexWrap: "wrap" } },
+              h(Btn, { kind: "qbw-btn2", onClick: async () => {
+                try {
+                  await navigator.clipboard.writeText(JSON.stringify({ at: la.at, code: la.code, reason: la.reason, hint: la.hint, version: la.version ?? "" }, null, 2));
+                  toast("✓ 诊断信息已复制");
+                } catch (e) { toast(`✗ 复制失败：${e.message}`); }
+              } }, "复制诊断"),
+              h(Btn, { kind: "qbw-btn2", onClick: () => window.open("https://github.com/Mieksido/surfcore/releases/latest", "_blank", "noopener") }, "去下载新版")));
+          })(),
+          working ? h(ProgressBar, { phase: "正在下载/应用更新…", indeterminate: true }) : null),
           h("div", { className: "qbw-actions", style: { flexShrink: 0, paddingTop: "10px" } },
             h(Btn, { kind: "qbw-btn2", onClick: () => (never ? dismissThis() : onClose?.()), disabled: working },
               never ? "不再提示本次" : "稍后"),
