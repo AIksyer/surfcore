@@ -70,7 +70,10 @@ export function buildInstallChecks(ctx) {
   // 今日唤醒额度：额度用完 = 它不会回消息，但以前只写日志、界面上一点提示都没有
   // （2026-10-30 用户报「私聊不回我」，查日志才发现 10/10）。有桥接快照就把它显示出来。
   const guardRows = Array.isArray(ctx.wakeGuard?.conversations) ? ctx.wakeGuard.conversations : [];
-  if (guardRows.length) {
+  if (guardRows.length && ctx.wakeGuard?.enabled === false) {
+    // 关掉「Token 防爆破」时次数上限不生效，再把 11/10 显示出来只会让人以为坏了。
+    add('唤醒额度', 'ok', 'Token 防爆破已关闭：不按次数拦唤醒（仍受每分钟/每小时限频与每日 token 额度约束）');
+  } else if (guardRows.length) {
     const label = (key) => (String(key).startsWith('private:') ? `私聊 ${String(key).slice(8)}` : `群 ${String(key).slice(6)}`);
     const blocked = guardRows.filter((row) => row?.blocked);
     add('唤醒额度', blocked.length ? 'warn' : 'ok',

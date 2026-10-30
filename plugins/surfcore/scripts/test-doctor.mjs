@@ -99,6 +99,14 @@ const base = {
     wakeGuard: { conversations: [{ key: 'private:1000000001', dayCount: 2, maxDay: 10, blocked: false }] },
   });
   assert.equal(healthy.find((c) => c.name === '唤醒额度').level, 'ok');
+  // 关掉「Token 防爆破」时次数不生效，不能把 11/10 当成「坏了」
+  const disabled = buildInstallChecks({
+    ...base,
+    wakeGuard: { enabled: false, conversations: [{ key: 'private:1000000001', dayCount: 11, maxDay: 10, blocked: false }] },
+  });
+  const off = disabled.find((c) => c.name === '唤醒额度');
+  assert.equal(off.level, 'ok');
+  assert.ok(off.detail.includes('已关闭'));
   // 没有桥接快照（桥接没跑）时不显示这一项，避免误报
   assert.equal(buildInstallChecks(base).some((c) => c.name === '唤醒额度'), false);
 }
