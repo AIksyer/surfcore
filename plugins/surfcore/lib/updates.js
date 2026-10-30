@@ -340,6 +340,12 @@ export async function inspectVersionComponent(component, { fetch: doFetch = true
       // 用 releases/latest 的 302（不消耗 API 配额）；取不到才退回提交号。
       let ver = remoteVer;
       if (!ver) {
+        // github.com 在部分网络下不可达（2026-10-30 实测：github.com 超时、api/codeload 正常）。
+        // 先查 API tags（不依赖 github.com），最后才退到 302。
+        const tagOnly = await fetchLatestTagOnly(repo).catch(() => null);
+        if (tagOnly?.tag) ver = String(tagOnly.tag).replace(/^v/i, '');
+      }
+      if (!ver) {
         const tag = await fetchLatestByRedirect(repo).catch(() => null);
         if (tag?.tag) ver = String(tag.tag).replace(/^v/i, '');
       }
@@ -841,7 +847,7 @@ export async function downloadReleaseAsset(component, report, { stateDir, plugin
 export function createUpdatesService({ stateDir, components, blockedReason = () => '', pluginLog = () => {}, githubToken = () => '' }) {
   const file = path.join(stateDir, 'updates.json');
   const now = () => Date.now();
-  let state = { dismissed: {}, lastCheckAt: 0, results: [], lastError: '', lastApplyFailure: null };
+  let state = { dismissed: {}, lastCheckAt: 0, results: [], lastError: '', lastApplyFailure: null, applyBackoff: {} };
   try {
     const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (raw && typeof raw === 'object') {
@@ -851,6 +857,7 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
         results: Array.isArray(raw.results) ? raw.results : [],
         lastError: String(raw.lastError ?? ''),
         lastApplyFailure: raw.lastApplyFailure && typeof raw.lastApplyFailure === 'object' ? raw.lastApplyFailure : null,
+        applyBackoff: raw.applyBackoff && typeof raw.applyBackoff === 'object' ? raw.applyBackoff : {},
       };
     }
   } catch { /* 第一次跑 / 文件坏了：用默认值，不炸 */ }
@@ -897,11 +904,25 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
   }
 
   /** 这批结果里"值得提示"的项：有更新，且这次的远端 commit 没被 dismiss 过。 */
+  /** 这次更新目标的标识（提交 sha 或用版本号），用于 dismiss / 退避比对。 */
+  function targetKeyOf(item) {
+    return String(item?.remote ?? `v${item?.latestVersion ?? ''}`);
+  }
+
   function pendingOf(results) {
-    return (results ?? []).filter((item) => item?.available && item.updateAvailable
-      && !item.blocked // 本地有改动/分叉的组件更新不了，别反复弹
-      && Boolean(item.installedVersion || item.local)
-      && state.dismissed[item.id] !== (item.remote ?? `v${item.latestVersion ?? ''}`));
+    const now = Date.now();
+    return (results ?? []).filter((item) => {
+      if (!(item?.available && item.updateAvailable)) return false;
+      if (item.blocked) return false; // 本地有改动/分叉/缺证据，更新不了，别反复弹
+      if (!(item.installedVersion || item.local)) return false;
+      const target = targetKeyOf(item);
+      if (state.dismissed[item.id] === target) return false;
+      // 下载/网络类失败后 30 分钟内不再自动弹（用户关一次不该下次检查又弹）；
+      // 手动检查仍能在卡片里看到结果与「重试」。
+      const backoff = state.applyBackoff?.[item.id];
+      if (backoff && backoff.target === target && Number(backoff.until) > now) return false;
+      return true;
+    });
   }
 
   function hashFile(file) {
@@ -1182,10 +1203,22 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
     // 没有版本号（语音包等按提交追踪的组件）才退回 main.zip。
     const wantVer = String(report?.latestVersion ?? '').trim();
     const isSemver = /^\d+\.\d+\.\d+$/.test(wantVer);
-    const url = String(item.archiveUrl
-      || (isSemver
-        ? `https://github.com/${repo}/archive/refs/tags/v${wantVer}.zip`
-        : `https://github.com/${repo}/archive/refs/heads/main.zip`));
+    // 下载走 codeload 直连（少一次 302、少一个域名依赖），再依次试镜像；
+    // github.com 在部分网络下不可达，但 codeload 正常（2026-10-30 实测）。
+    const archivePaths = isSemver
+      ? [`${repo}/zip/refs/tags/v${wantVer}`, `${repo}/archive/refs/tags/v${wantVer}.zip`]
+      : [`${repo}/zip/refs/heads/main`, `${repo}/archive/refs/heads/main.zip`];
+    const urls = [];
+    for (const pathPart of archivePaths) {
+      if (pathPart.startsWith('http')) urls.push(pathPart);
+      else if (pathPart.startsWith(`${repo}/zip/`)) urls.push(`https://codeload.github.com/${pathPart}`);
+      else urls.push(`https://github.com/${pathPart}`);
+    }
+    if (!String(item.archiveUrl || '').startsWith('http')) {
+      urls.push(`https://gh-proxy.com/${urls[0]}`);
+      urls.push(`https://ghproxy.net/${urls[0]}`);
+    }
+    const url = String(item.archiveUrl || urls[0]);
     const stamp = String(Date.now());
     const stagingRoot = path.join(stateDir, 'staging', `${item.id}-${stamp}`);
     fs.mkdirSync(stagingRoot, { recursive: true });
@@ -1194,20 +1227,48 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
       try { fs.rmSync(stagingRoot, { recursive: true, force: true }); } catch {}
       return obj;
     };
+    if (!isSemver && !String(item.archiveUrl || '').startsWith('http')) {
+      // 目标只是一串提交号 = 远端有提交但没有可用版本（未发版/取不到 tag）。
+      // 这时装 main.zip 会得到"文件是新的、package.json 还是旧版本"的快照，用户会觉得更新无效。
+      return fail({
+        ok: false, status: 'blocked', stage: 'preflight', code: 'version-unknown',
+        reason: `检测到远端有新提交（${String(report?.remoteSha || '').slice(0, 7) || '?'}），但没有对应的发布版本号`,
+        hint: '未发版提交不能自动更新：到 Release 页下载最新版手动覆盖；或确认网络能访问 api.github.com（版本号查询依赖它）',
+      });
+    }
     const zipFile = path.join(stagingRoot, 'pkg.zip');
     try {
-      pluginLog(`[updates] 下载 ${url}`);
-      let res;
-      try {
-        res = await fetch(url, { signal: AbortSignal.timeout(180_000) });
-      } catch (error) {
-        const aborted = /abort|timeout/i.test(String(error?.name ?? error?.message ?? error));
+      // 依次试 codeload / 镜像；把试过的地址写进诊断，失败时能看出是哪个域名不通。
+      const tried = [];
+      let res = null;
+      let lastError = null;
+      let lastStatus = 0;
+      // 组件显式配了 archiveUrl 就只试它（尊重配置）；否则按 codeload → 归档 → 镜像 依次回退。
+      const candidates = [url, ...(String(item.archiveUrl || '').startsWith('http') ? [] : urls.filter((u) => u !== url))];
+      for (const candidate of candidates) {
+        tried.push(candidate);
+        pluginLog(`[updates] 下载 ${candidate}`);
+        try {
+          const r = await fetch(candidate, { signal: AbortSignal.timeout(180_000) });
+          if (r.ok) { res = r; break; }
+          lastStatus = r.status;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      if (!res) {
+        const aborted = /abort|timeout/i.test(String(lastError?.name ?? lastError?.message ?? ''));
         return fail({
           ok: false, status: 'failed', stage: 'download',
-          code: aborted ? 'download.timeout' : 'download.network',
-          reason: aborted ? '下载超时（180 秒）' : `下载失败：${String(error?.message ?? error).slice(0, 160)}`,
-          hint: '检查网络后重试；持续失败可手动下载安装包',
+          code: aborted ? 'download.timeout' : lastStatus ? `download.http-${lastStatus}` : 'download.network',
+          reason: aborted
+            ? '下载超时（180 秒）'
+            : lastStatus
+              ? `下载失败：服务器返回 HTTP ${lastStatus}`
+              : `下载失败：${String(lastError?.message ?? lastError ?? '所有地址都不可用').slice(0, 160)}`,
+          hint: '检查网络后重试；持续失败可手动下载安装包（会自动尝试 codeload 与镜像）',
           retryable: true,
+          diagnostics: { tried },
         });
       }
       if (!res.ok) {
@@ -1488,6 +1549,16 @@ export function createUpdatesService({ stateDir, components, blockedReason = () 
         persist();
       } catch {}
       const failedNow = results.filter((row) => !row.ok);
+      // 下载/网络类失败：30 分钟内不再自动弹同一条（用户关掉后不该每次检查又出现）
+      for (const f of failedNow) {
+        if (/^download\./.test(String(f.code || '')) || String(f.code || '').startsWith('stage.')) {
+          const row = (state.results ?? []).find((r) => r.id === f.id);
+          if (row) {
+            state.applyBackoff = state.applyBackoff && typeof state.applyBackoff === 'object' ? state.applyBackoff : {};
+            state.applyBackoff[f.id] = { target: targetKeyOf(row), until: Date.now() + 30 * 60_000, code: f.code };
+          }
+        }
+      }
       state.lastApplyFailure = failedNow.length
         ? {
           status: 'failed',

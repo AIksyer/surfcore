@@ -4,6 +4,22 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.7.17] - 2026-10-30
+
+### 修复（github.com 不通时：查不到新版本、下载必失败、反复弹窗）
+
+- **版本发现补 api tags**：提交模式下取不到版本时，先查 `api.github.com/tags`（不依赖 `github.com`），
+  再退 `releases/latest` 的 302 —— 不再把提交号当版本号显示；
+- **下载改 codeload 直连**：`codeload.github.com/.../zip/refs/tags/vX.Y.Z`，失败依次回退 github 归档、
+  gh-proxy、ghproxy；`diagnostics.tried` 记录试过的地址；
+- **非版本目标阻止自动更新**：目标不是 `x.y.z` 时返回 `blocked(version-unknown)`，
+  不再下载 main 快照（那种包装上去“版本号永远不变”）；
+- **失败后退避 30 分钟**：下载/网络类失败不再让同一条更新提示每次检查都弹；手动检查仍能看到结果；
+- 组件显式配置了 `archiveUrl` 时只试它，不额外加镜像。
+
+> 调查记录：[提交号当版本号 + 下载单点](docs/cases/2026-10-30-update-commit-vs-version.md)
+
+
 ## [0.7.16] - 2026-10-30
 
 ### 新增（更新后必须重启 DSH 的提示）

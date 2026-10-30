@@ -209,6 +209,49 @@ try {
     } finally { restore(); delete process.env.SURFCORE_UPDATE_NO_SPAWN; }
   }
 
+  // 3.55) 下载走 codeload 直连；codeload 失败自动换 github 归档（不押单一域名）
+  {
+    const dir = makeTarget('codeload', '0.6.22', { withMeta: true });
+    const svc = mkService(dir, { archiveUrl: '' });
+    const seen = [];
+    const restore = stubFetch(async (u) => {
+      if (u.includes('codeload.github.com')) { seen.push(u); return new Response('down', { status: 500 }); }
+      if (u.includes('/archive/refs/tags/')) { seen.push(u); return new Response(ZIP, { status: 200 }); }
+      if (u.includes('/releases/latest')) return new Response(null, { status: 302, headers: { location: 'https://github.com/Mieksido/surfcore-test/releases/tag/v0.7.0' } });
+      return undefined;
+    });
+    process.env.SURFCORE_UPDATE_NO_SPAWN = '1';
+    try {
+      await svc.check({ fetch: true });
+      const r = await svc.apply(['surfcore']);
+      ok(r.results[0].ok === true, 'codeload 失败后换归档成功', JSON.stringify(r.results[0]));
+      ok(seen[0].includes('codeload.github.com'), '首先尝试 codeload 直连', seen[0] || '');
+      ok(seen.some((u) => u.includes('github.com/Mieksido') && u.includes('/archive/')), '失败后回退 github 归档', seen.join(' | '));
+    } finally { restore(); delete process.env.SURFCORE_UPDATE_NO_SPAWN; }
+  }
+
+  // 3.56) 目标只有提交号（没有版本）→ 阻止自动更新，不装"版本不变的快照"
+  {
+    const dir = makeTarget('no-semver', '0.6.22', { withMeta: true });
+    fs.writeFileSync(path.join(dir, '.installed-meta.json'), JSON.stringify({ version: '0.6.22', sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }));
+    const svc = mkService(dir, { archiveUrl: '' });
+    const restore = stubFetch(async (u) => {
+      if (u.includes('/releases/latest')) return new Response('', { status: 404 });
+      if (u.includes('/tags?')) return new Response('[]', { status: 200 });
+      return undefined;
+    });
+    process.env.SURFCORE_UPDATE_NO_SPAWN = '1';
+    try {
+      await svc.check({ fetch: true });
+      const r = await svc.apply(['surfcore']);
+      const row = r.results[0];
+      const blocked = row.ok === false && row.code === 'version-unknown';
+      const noPending = row.ok === false && (r.results[0].status === 'blocked');
+      ok(blocked || noPending, '没有版本号 → 阻止自动更新', JSON.stringify(row));
+      ok(/未发版|没有对应的发布版本/.test(String(row.reason)), '原因说明"没有发布版本"', String(row.reason));
+    } finally { restore(); delete process.env.SURFCORE_UPDATE_NO_SPAWN; }
+  }
+
   // 3.6) 有版本号时下载 tag 归档（main.zip 会漂移，和清单对不上）
   {
     const dir = makeTarget('tag-url', '0.6.22', { withMeta: true });
@@ -218,14 +261,14 @@ try {
       if (u.includes('/releases/latest')) {
         return new Response(null, { status: 302, headers: { location: 'https://github.com/Mieksido/surfcore-test/releases/tag/v0.7.0' } });
       }
-      if (u.includes('/archive/')) { seen.push(u); return new Response(ZIP, { status: 200 }); }
+      if (u.includes('/zip/') || u.includes('/archive/')) { seen.push(u); return new Response(ZIP, { status: 200 }); }
       return undefined;
     });
     process.env.SURFCORE_UPDATE_NO_SPAWN = '1';
     try {
       await svc.check({ fetch: true });
       await svc.apply(['surfcore']);
-      ok(seen.some((u) => /\/archive\/refs\/tags\/v0\.7\.0\.zip$/.test(u)), '有版本号时下载 tag 归档', seen.join(' | '));
+      ok(seen.some((u) => /(codeload\.github\.com\/.*\/zip\/refs\/tags\/v0\.7\.0|\/archive\/refs\/tags\/v0\.7\.0\.zip$)/.test(u)), '有版本号时下载 tag 归档', seen.join(' | '));
       ok(!seen.some((u) => u.includes('/refs/heads/main.zip')), '不再下载分支归档');
     } finally { restore(); delete process.env.SURFCORE_UPDATE_NO_SPAWN; }
   }
@@ -245,6 +288,10 @@ try {
       const st = svc.status();
       ok(st.lastApply?.status === 'failed', '失败状态常驻（不靠 toast）', JSON.stringify(st.lastApply));
       ok(st.lastApply?.code === 'download.http-500', '常驻状态带 code', String(st.lastApply?.code));
+      // 下载失败后 30 分钟内不再自动弹同一条（用户关一次不该下次检查又弹）
+      ok((st.pending ?? []).length === 0, '失败后不再进待办（30 分钟退避）', JSON.stringify(st.pending));
+      const persisted = JSON.parse(fs.readFileSync(path.join(dir, '.state', 'updates.json'), 'utf8'));
+      ok(Boolean(persisted.applyBackoff?.surfcore), '退避状态已持久化', JSON.stringify(persisted.applyBackoff));
     } finally { restore(); delete process.env.SURFCORE_UPDATE_NO_SPAWN; }
   }
 
