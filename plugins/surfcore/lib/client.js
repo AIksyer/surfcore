@@ -39,8 +39,9 @@ window.__ModuleLoader__.load({
       err ? h("div", { className: "qbw-err", style: { marginTop: "6px" } }, err) : null);
   }
 
-  async function browseNative(mode = "dir", title = "") {
-    const q = `mode=${mode === "file" ? "file" : "dir"}&title=${encodeURIComponent(title)}`;
+  async function browseNative(mode = "dir", title = "", filter = "") {
+    // filter 只接受宿主认识的枚举（如 snowluma），不把原始 filter 串传给宿主。
+    const q = `mode=${mode === "file" ? "file" : "dir"}&title=${encodeURIComponent(title)}${filter ? `&filter=${encodeURIComponent(filter)}` : ""}`;
     const res = await fetch(`${API}/browse?${q}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(180000) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
@@ -1377,6 +1378,8 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
         } finally { setBusy(""); }
       };
       const [snowError, setSnowError] = useState(null);
+      // 手动导入 SnowLuma：先说明"导入的是什么"，再开选择框
+      const [snowImport, setSnowImport] = useState(false);
       const [autoPrompted, setAutoPrompted] = useState(false);
       useEffect(() => {
         if (!autoPrompted && updates?.showPrompt) {
@@ -1425,6 +1428,16 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
         } finally {
           setBusy("");
         }
+      };
+      // 手动导入：只接受 SnowLuma 的启动文件（SnowLuma.exe / launcher.bat）。
+      // 选完让后端验证并保存安装目录；失败会弹窗说明"这个文件为什么不行"。
+      const pickSnowLumaFile = async () => {
+        setSnowImport(false);
+        try {
+          const r = await browseNative("file", "选择 SnowLuma 的启动文件（SnowLuma.exe 或 app\launcher.bat）", "snowluma");
+          if (r.ok && r.path) await detectSnowLuma(String(r.path));
+          else if (!r.cancelled) toast(`✗ ${r.error || "打不开选择框"}`);
+        } catch (e) { toast(`✗ ${e.message}`); }
       };
       // 弹窗里的「浏览…」：选完直接重试检测。
       const pickSnowLuma = async () => {
@@ -1654,9 +1667,11 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
               h("div", { className: "qbw-actions" },
                 h(Btn, { kind: "qbw-btn2", onClick: () => window.open(snow.downloadUrl || "https://github.com/SnowLuma/SnowLuma/releases/latest", "_blank", "noopener") }, "打开官方下载页"),
                 h(Btn, { onClick: () => detectSnowLuma(), disabled: !!busy }, "检测已安装的 SnowLuma"),
+                h(Btn, { kind: "qbw-btn2", onClick: () => setSnowImport(true), disabled: !!busy }, "手动选择已安装的 SnowLuma"),
                 h(Browse, { mode: "dir", title: "选择 SnowLuma2 解压出来的根目录（里面有 app）", onPick: (picked) => detectSnowLuma(picked) }),
                 h(Btn, { kind: "qbw-btn2", onClick: () => act("start-snowluma"), disabled: !!busy }, "只打开 SnowLuma")),
-              h("div", { className: "qbw-hint" }, "检测只会在常见位置里猜。装在别处（例如 D:\\软件\\SnowLuma2）就点「浏览…」自己选根目录（里面有 app）；选 app 目录或 app\\launcher.bat 也能识别。"),
+              h("div", { className: "qbw-hint" }, "检测只会在常见位置里猜。装在别处（例如 D:\软件\SnowLuma2）就点「手动选择已安装的 SnowLuma」，选 SnowLuma.exe 或 app\launcher.bat（也可以直接选解压根目录）。"),
+              h("div", { className: "qbw-hint" }, "「手动选择」只是告诉插件你装好的 SnowLuma 在哪：不下载、不安装、不移动、不删除任何文件。"),
               h("div", { className: "qbw-hint" }, "SurfCore 只负责检测、打开和查看连接状态；SnowLuma2 本体按 EULA 不随插件分发，安装与扫码仍需你完成。")),
             h("div", { className: "qbw-card" },
               h("h4", null, "扩展与平台"),
@@ -1669,6 +1684,20 @@ F("toolsPath", "bili.mjs 路径", "留空 = 用合体插件自带的 tools/", "t
             setBusy("backup");
             try { const r = await api("/diagnostics", { method: "POST", body: { action: "backup" } }); toast(`✓ 已备份 ${r.created?.length ?? 0} 个文件`); } catch (e) { toast(`✗ ${e.message}`); } finally { setBusy(""); }
           }, disabled: !!busy }, "立即备份配置")),
+        snowImport ? h("div", { className: "qbw-modal-backdrop", onClick: (e) => { if (e.target === e.currentTarget) setSnowImport(false); } },
+          h("div", { className: "qbw-modal" },
+            h("h3", null, "导入 SnowLuma 的安装位置"),
+            h("p", null, "这里导入的是**你已经装好的 SnowLuma 的启动文件**，不是安装包；SurfCore 不会下载、不会安装、不会移动或删除任何文件。"),
+            h("p", { className: "qbw-hint" }, "请选择下面任意一个："),
+            h("ul", { style: { margin: "4px 0 8px", paddingLeft: "18px", fontSize: "12px", lineHeight: "19px" } },
+              h("li", null, "SnowLuma.exe —— SnowLuma2 目录里的主程序"),
+              h("li", null, "app\launcher.bat —— 标准布局里的启动脚本"),
+              h("li", null, "解压出来的 SnowLuma2 根目录（点「改为选择目录」）")),
+            h("p", { className: "qbw-hint" }, "选完只会做两件事：验证这个位置确实是 SnowLuma、把安装目录记进配置。不复制、不改名、不卸载。"),
+            h("div", { className: "qbw-actions" },
+              h(Btn, { onClick: pickSnowLumaFile, disabled: !!busy }, "选择文件…"),
+              h(Btn, { kind: "qbw-btn2", onClick: async () => { setSnowImport(false); await pickSnowLuma(); } }, "改为选择目录"),
+              h(Btn, { kind: "qbw-btn2", onClick: () => setSnowImport(false) }, "取消")))) : null,
         snowError ? h(ErrorModal, {
           title: snowError.title,
           message: snowError.message,

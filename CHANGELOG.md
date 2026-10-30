@@ -4,6 +4,20 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.7.14] - 2026-10-30
+
+### 新增（SnowLuma 手动指定安装位置）
+
+- 「检测已安装的 SnowLuma」旁新增 **「手动选择已安装的 SnowLuma」**；
+- 点击先弹说明：导入的是**已装好的 SnowLuma 的启动文件**（`SnowLuma.exe` / `app\launcher.bat`，也可选根目录），
+  **不下载、不安装、不移动、不删除任何文件**；
+- 文件对话框类型限定 `SnowLuma.exe;launcher.bat`（此前只有 `*.exe`，选不到 `launcher.bat`）；
+- 宿主 `/browse` 只接受 `filter=snowluma` 枚举，不接受任意过滤串；
+- 失败仍走结构化弹窗（原因 + 建议 + 试过的路径）。
+
+> 测试：契约测试钉住按钮、说明文案、过滤器与宿主映射；audit 85/85；插件测试全绿。
+
+
 ## [0.7.13] - 2026-10-30
 
 ### 修复（桌宠：填了安装目录点安装仍报「请先填写安装包地址」）

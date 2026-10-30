@@ -65,6 +65,35 @@
 
 判据、弹窗/toast 选择、禁止清单见 [`docs/guides/ERROR-REPORTING.md`](docs/guides/ERROR-REPORTING.md)。
 
+## 1.8 发布纪律：三条门禁，缺一条就不许发（2026-10-30 血泪）
+
+三次连续事故（0.7.1–0.7.12）都出在**发布物与校验清单不同源**。以下是刚性步骤，
+按顺序跑完才算发布完成；任何一条没过就停手，不要"先发了再说"。
+
+1. **清单从 git 对象生成，不是工作区**
+   ```bash
+   git status --porcelain          # 必须干净
+   node scripts/release-manifest.mjs            # 内容取自 HEAD 的 blob，不受 Windows CRLF 影响
+   node scripts/release-manifest.mjs --verify-ref HEAD   # 必须“问题 0 个”
+   ```
+2. **发布走 git 对象，不是工作区文件**
+   发布脚本必须是 `git show HEAD:<path>` 取内容（`scripts/publish-via-api.mjs` 已如此）；
+   **禁止**把工作区字节直接 POST 给 GitHub —— 否则远端存 CRLF，客户端按 LF 校验必然失败。
+3. **发完必须下载真实归档核对，不许只看本地**
+   ```bash
+   curl -sL -o a.zip https://codeload.github.com/<owner>/<repo>/zip/refs/tags/vX.Y.Z
+   # 解压后
+   node scripts/release-manifest.mjs --verify <解压目录>   # 必须“不符 0 / 缺失 0”
+   ```
+
+**给未来的我**：如果用户反馈"点了更新版本不变"，先看 `lastApplyFailure.code`：
+- `verify.staging-mismatch` → **发布侧问题**，别让用户重试，直接手动下载 + 修发布链路；
+- `evidence-insufficient` → 缺安装证据，检查 `.installed-manifest.json`；
+- `download.*` → 网络/镜像问题，换链路重试。
+
+**不要**在没有 `--verify-ref` 通过、没有真实归档核对的情况下宣布"已发布"。
+版本号只由用户在发布会话里定；编辑会话不得 bump/tag/推公开仓库（见 §1.5）。
+
 ## 2. 环境事实（省得重新摸一遍）
 
 - 本机 DSH：`<DSH 安装目录>`，版本 `0.2.1-rc.2`；用户数据 `~/.dsh`。

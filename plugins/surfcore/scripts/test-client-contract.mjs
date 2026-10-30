@@ -384,4 +384,15 @@ assert.ok(/api\("\/pet\/install",[\s\S]{0,200}source: form\.source\.trim\(\)/.te
 assert.ok(/api\("\/pet\/install",[\s\S]{0,260}appDir: form\.appDir\.trim\(\)/.test(source), '桌宠安装请求必须带 appDir');
 assert.ok(/act\("start", \{ electronPath: form\.electronPath\.trim\(\) \}\)/.test(source), '桌宠启动请求必须带 electronPath');
 
+// ── 手动导入 SnowLuma（2026-10-30 用户要求：检测按钮旁加手动选择 + 说明导入的是什么）──
+assert.ok(source.includes('手动选择已安装的 SnowLuma'), '必须提供「手动选择已安装的 SnowLuma」按钮');
+assert.ok(/setSnowImport\(true\)/.test(source), '按钮要打开说明弹窗（不是直接开选择框）');
+assert.ok(source.includes('导入 SnowLuma 的安装位置'), '说明弹窗标题存在');
+assert.ok(source.includes('SnowLuma.exe —— SnowLuma2 目录里的主程序'), '弹窗必须说清要选什么文件');
+assert.ok(source.includes('不会下载、不会安装、不会移动或删除任何文件'), '弹窗必须说明不会改动文件');
+assert.ok(/browseNative\("file",[^)]*"snowluma"\)/.test(source), '文件选择必须用 snowluma 过滤器');
+assert.ok(!/browseNative\("file",[^)]*filter:/.test(source), '不得把原始 filter 串传给宿主');
+
+
+
 console.log('client contract tests OK');

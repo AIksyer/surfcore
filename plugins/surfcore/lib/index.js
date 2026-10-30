@@ -1969,6 +1969,11 @@ export function apply(ctx) {
   async function handleBrowse(req, res, url) {
     const mode = url.searchParams.get('mode') === 'file' ? 'file' : 'dir';
     const title = url.searchParams.get('title') || (mode === 'file' ? '选择文件' : '选择目录');
+    // 文件过滤只认枚举（目前只有 snowluma）：不接受任意 filter 串，避免用户被诱导选错类型。
+    const filterKey = String(url.searchParams.get('filter') || '').trim().toLowerCase();
+    const fileFilter = filterKey === 'snowluma'
+      ? 'SnowLuma 启动文件 (SnowLuma.exe;launcher.bat)|SnowLuma.exe;launcher.bat|所有文件 (*.*)|*.*'
+      : '可执行文件 (*.exe)|*.exe|所有文件 (*.*)|*.*';
     if (process.platform !== 'win32') {
       json(res, 200, { ok: false, error: '只有 Windows 支持原生选择框，请手动填路径' });
       return;
@@ -1980,7 +1985,7 @@ export function apply(ctx) {
       ? `Add-Type -AssemblyName System.Windows.Forms;
 $d = New-Object System.Windows.Forms.OpenFileDialog;
 $d.Title = ${psQuote(title)};
-$d.Filter = '可执行文件 (*.exe)|*.exe|所有文件 (*.*)|*.*';
+$d.Filter = ${psQuote(fileFilter)};
 if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$d.FileName')} }`
       : `Add-Type -AssemblyName System.Windows.Forms;
 $d = New-Object System.Windows.Forms.FolderBrowserDialog;
