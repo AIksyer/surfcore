@@ -2068,10 +2068,25 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$
         json(res, 200, r);
         return;
       }
-      if (suffix === '/install') { json(res, 200, await petService.install()); return; }
+      if (suffix === '/install') {
+        // body 里带设置页表单：安装请求本身就要落盘 source/appDir/electronPath，
+        // 不能要求用户先点「保存设置」（2026-10-30：填了目录点安装仍报"请先填写安装包地址"）。
+        const r = await petService.install(body?.source, {
+          source: body?.source, appDir: body?.appDir, electronPath: body?.electronPath,
+        });
+        json(res, 200, r);
+        return;
+      }
       if (suffix === '/remove') { json(res, 200, await petService.remove()); return; }
       if (suffix === '/clean') { json(res, 200, await petService.cleanAppDir()); return; }
-      if (suffix === '/start') { json(res, 200, await petService.start()); return; }
+      if (suffix === '/start') {
+        // 启动同样接受表单里的 electronPath：用户刚填的路径不该先"保存"才生效。
+        if (typeof body?.electronPath === 'string' && body.electronPath.trim()) {
+          try { petService.configure({ electronPath: body.electronPath.trim() }); } catch {}
+        }
+        json(res, 200, await petService.start());
+        return;
+      }
       if (suffix === '/stop') { json(res, 200, await petService.stop()); return; }
       if (suffix === '/chat-test') {
         // 给设置页「发一条测试消息」用：不占主动搭话，只验证人设/模型/语音链路。

@@ -2855,3 +2855,11 @@ Node 读文件后删除；不再解析 stdout。所有「浏览…」共用此�
 - **修法**（0.7.11）：`release-manifest` 用 `git cat-file` 读 HEAD blob 算哈希；
   新增 `--verify-ref <ref>` 发版门禁；同步白名单补 dotfiles。
 - **教训**：清单/制品/校验必须同源同字节；Windows 上任何“读工作区文件算哈希”都会踩 CRLF。
+
+## 桌宠安装请求不带表单 → 填了也不生效
+
+- **现象**：填了安装目录、Electron 已下载，点「安装」报「请先填写安装包地址」；config.json 里 source/appDir 为空。
+- **根因**：前端 `POST /pet/install` body 是 `{}`，后端读持久化配置（空）；输入框也没有保存路径。
+- **修法**（0.7.13）：安装/启动请求带 `{source, appDir, electronPath}`，后端先落盘再执行；
+  Windows 路径要求盘符（`pet.path-no-drive`）；空地址返回 `pet.source-missing` + field + hint。
+- **教训**：「表单即配置」的页面，动作请求必须显式带表单，并用契约测试钉住。

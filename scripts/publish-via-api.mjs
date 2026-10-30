@@ -67,7 +67,7 @@ if (remoteTree === localTree) {
   // 用 --since 指定的本地祖先做 diff —— 多上传几个没变的文件没关系，base_tree 仍用远端的。
   let diffBase = remoteTree;
   const hasRemoteTree = (() => { try { git('cat-file', '-t', remoteTree); return true; } catch { return false; } })();
-  if (!hasRemoteTree) {
+  if (!all && !hasRemoteTree) {
     if (!since) {
       console.error(`本地没有远端树对象 ${remoteTree.slice(0, 7)}；请加 --since <本地已有的远端祖先提交>。`);
       process.exit(3);

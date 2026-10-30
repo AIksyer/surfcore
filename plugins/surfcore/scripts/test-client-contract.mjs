@@ -379,4 +379,9 @@ assert.ok(source.includes('打开网盘下载（提取码 sxUZ）'), '必须有�
 assert.ok(source.includes('复制链接'), '必须有复制链接兜底');
 assert.ok(source.includes('api("/voice/packs/netdisk"'), '按钮必须走后端打开（Electron 会拦新窗口）');
 
+// ── 桌宠安装：表单必须随请求提交（2026-10-30 用户反馈：填了也不生效）──
+assert.ok(/api\("\/pet\/install",[\s\S]{0,200}source: form\.source\.trim\(\)/.test(source), '桌宠安装请求必须带 source');
+assert.ok(/api\("\/pet\/install",[\s\S]{0,260}appDir: form\.appDir\.trim\(\)/.test(source), '桌宠安装请求必须带 appDir');
+assert.ok(/act\("start", \{ electronPath: form\.electronPath\.trim\(\) \}\)/.test(source), '桌宠启动请求必须带 electronPath');
+
 console.log('client contract tests OK');

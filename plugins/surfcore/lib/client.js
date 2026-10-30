@@ -4979,7 +4979,14 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           st && st.installing ? h(ProgressBar, { pct: st.installing.progress, phase: st.installing.phase, err: st.installing.error, indeterminate: /依赖|模型/.test(String(st.installing.phase || '')) && Number(st.installing.progress || 0) >= 99 }) : null,
           h("div", { className: "qbw-actions" },
             !st || !st.installed ? h(Btn, { disabled: busy === "install" || !form.source.trim(), onClick: async () => {
-              const r0 = await api("/pet/install", { method: "POST", body: {} }).catch((e) => ({ ok: false, error: e.message }));
+              const r0 = await api("/pet/install", {
+                method: "POST",
+                body: {
+                  source: form.source.trim(),
+                  appDir: form.appDir.trim(),
+                  electronPath: form.electronPath.trim(),
+                },
+              }).catch((e) => ({ ok: false, error: e.message }));
               if (r0 && r0.ok === false) { setErr(r0.error); return; }
               setBusy("install");
               for (let i = 0; i < 600; i += 1) {
@@ -5009,7 +5016,10 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
                   await read();
                 } catch (e) { setErr(e.message); } finally { setBusy(""); }
               } }, busy === "clean" ? "清理中…" : "清理残留后重试")) : null,
-            st && st.installed && !st.running ? h(Btn, { onClick: () => act("start"), disabled: !!busy }, "启动") : null,
+            st && st.installed && !st.running ? h(Btn, {
+              onClick: () => act("start", { electronPath: form.electronPath.trim() }),
+              disabled: !!busy,
+            }, "启动") : null,
             st && st.installed && st.running ? h(Btn, { kind: "qbw-btn2", onClick: () => act("stop"), disabled: !!busy }, "停止") : null,
             st && st.installed ? h(Btn, { kind: "qbw-btn2", onClick: () => act("remove"), disabled: !!busy }, "卸载") : null)),
         h("div", { className: "qbw-card", style: { marginTop: "10px" } },
@@ -5025,6 +5035,8 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
             h("input", { className: "qbw-input", value: form.appDir, placeholder: "留空 = ~/.dsh/surfcore/pet/app", onChange: (e) => setForm((f) => ({ ...f, appDir: e.target.value })) }),
             h(Browse, { mode: "dir", title: "选择桌宠安装目录", onPick: (v) => setForm((f) => ({ ...f, appDir: v })) })),
           h("div", { className: "qbw-hint", style: { marginTop: "4px" } }, "沙箱 / 只读用户目录的环境里，把安装目录指到可写位置（例如工作区内）。"),
+          h("div", { className: "qbw-hint", style: { marginTop: "4px" } },
+            "Windows 请填**带盘符**的完整路径（例如 D:\dshwork\pet）；只写 /dshwork/pet 会被装到当前盘。"),
           h("div", { className: "qbw-hint", style: { marginTop: "6px" } },
             `官方最新包：${st?.defaults?.zipUrl || "https://github.com/Mieksido/surfpet/releases/latest/download/pet-pack.zip"}`),
           h("div", { className: "qbw-actions" },

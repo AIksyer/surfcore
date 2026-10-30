@@ -4,6 +4,23 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.7.13] - 2026-10-30
+
+### 修复（桌宠：填了安装目录点安装仍报「请先填写安装包地址」）
+
+- **根因**：前端 `POST /pet/install` 的 body 是 `{}`，后端读的是已保存配置（`source`/`appDir` 为空）；
+  安装目录输入框也没有保存路径，用户填了等于没填。
+- **修法**：
+  - 安装请求带 `{source, appDir, electronPath}`，启动请求带 `{electronPath}`；
+  - 后端 `/pet/install`、`/pet/start` 接收 body；`install(source, patch)` **先把表单落盘再执行**；
+  - Windows 路径校验：非 `X:\` 开头 → `code=pet.path-no-drive` + 正确写法提示；
+  - 空安装包地址 → `code=pet.source-missing`、`field=source`、hint 指向「用官方最新版」；
+  - 安装目录下方补提示：Windows 必须带盘符。
+- **测试**：新增 `test-pet-install-form`（盘符 / 结构化错误 / 表单落盘 / 前后端契约）。
+
+> 调查记录：[桌宠安装表单未提交](docs/cases/2026-10-30-pet-install-form-not-submitted.md)
+
+
 ## [0.7.12] - 2026-10-30
 
 ### 修复（0.7.11 发布物被写成 CRLF，归档校验仍失败）
