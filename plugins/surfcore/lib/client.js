@@ -486,6 +486,8 @@ window.__ModuleLoader__.load({
 
     function AdminCard({ admin, onChange, qqPrivate = [], qqAllowAll = false, toast }) {
       const [auditOpen, setAuditOpen] = useState(false);
+      const [uidCheck, setUidCheck] = useState(null); // {ok, match, actualName, error, hint}
+      const [uidChecking, setUidChecking] = useState(false);
       const value = admin && typeof admin === "object" ? admin : {};
       const set = (key, next) => onChange({ ...value, [key]: next });
       const configured = Boolean(value.qq || value.biliMid || value.biliName);
@@ -495,6 +497,25 @@ window.__ModuleLoader__.load({
       const badge = aligned ? "ok" : configured ? "warn" : "bad";
       const badgeText = aligned ? "同一个人 ✓" : configured ? "只填了一边" : "未设置";
       const digits = (next) => String(next ?? "").replace(/[^\d]/g, "");
+      // 核查 UID 与昵称是否同一个人：查 B站 公开名片，把真实昵称带回来比对。
+      const checkUid = async () => {
+        const mid = String(value.biliMid ?? "").trim();
+        if (!/^\d{4,20}$/.test(mid)) {
+          setUidCheck({ ok: false, error: "B站 UID 必须是 4~20 位数字", hint: "个人空间地址 space.bilibili.com/<数字> 里的那串数字" });
+          return;
+        }
+        setUidChecking(true); setUidCheck(null);
+        try {
+          const r = await api("/bili/verify-user", { method: "POST", body: { mid, name: String(value.biliName ?? "").trim() } });
+          setUidCheck(r);
+          if (r.ok && r.match) toast(`✓ UID 与昵称一致：${r.actualName}（${r.mid}）`);
+          else if (r.ok && !r.match) toast(`✗ 昵称对不上：B站 是「${r.actualName}」`);
+          else toast(`✗ ${r.error || "核查失败"}`);
+        } catch (e) {
+          setUidCheck({ ok: false, error: e.message, hint: "检查网络能否访问 api.bilibili.com；稍后重试" });
+          toast(`✗ 核查失败：${e.message}`);
+        } finally { setUidChecking(false); }
+      };
       return h("div", { className: "qbw-admin" },
         h("div", { className: "qbw-admin-head" },
           h("div", null,
@@ -520,7 +541,24 @@ window.__ModuleLoader__.load({
               value: value.biliMid ?? "",
               onChange: (e) => set("biliMid", digits(e.target.value)),
             }),
-            h("small", null, "B站 评论区 / 私信 / 直播间认主用这个 mid")),
+            h("small", null, "B站 评论区 / 私信 / 直播间认主用这个 mid（4~20 位数字）"),
+            h("div", { style: { display: "flex", gap: "8px", alignItems: "center", marginTop: "6px", flexWrap: "wrap" } },
+              h(Btn, { kind: "qbw-btn2", onClick: checkUid, disabled: uidChecking || !String(value.biliMid ?? "").trim() },
+                uidChecking ? "核查中…" : "核查 UID 与昵称"),
+              uidCheck
+                ? h("span", { className: "qbw-hint", style: { color: uidCheck.ok ? (uidCheck.match ? "#67c23a" : "#e6a23c") : "#c0392b" } },
+                  uidCheck.ok
+                    ? (uidCheck.match
+                      ? `✓ 同一个人：${uidCheck.actualName}（${uidCheck.mid}）`
+                      : `⚠ B站 上的昵称是「${uidCheck.actualName}」`)
+                    : `✗ ${uidCheck.error || "核查失败"}`)
+                : null),
+            uidCheck && uidCheck.ok && !uidCheck.match
+              ? h(Btn, { kind: "qbw-btn2", onClick: () => { set("biliName", uidCheck.actualName || ""); setUidCheck({ ...uidCheck, match: true, inputName: uidCheck.actualName }); } }, "用 B站 昵称填上")
+              : null,
+            uidCheck && !uidCheck.ok && uidCheck.hint
+              ? h("small", null, `建议：${uidCheck.hint}`)
+              : null),
           h("label", { className: "qbw-admin-field" },
             h("span", null, "怎么称呼 TA"),
             h("input", {
@@ -2678,6 +2716,7 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
             if (stopped) return;
             if (result.status === "confirmed") {
               stopped = true; clearInterval(timer); idRef.current = "";
+              setState({ phase: "confirmed", account: result.account || {} });
               confirmedRef.current?.(result.account, target);
             } else if (result.status === "scanned") {
               setState((s) => ({ ...s, phase: "scanned" }));
@@ -2730,15 +2769,27 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
             target === "fish" ? h("label", { className: "qbw-hint", style: { display: "flex", gap: "6px", alignItems: "center", justifyContent: "center", marginTop: "8px" } },
               h("input", { type: "checkbox", checked: allowSameAsOwner, onChange: (e) => setAllowSameAsOwner(e.target.checked) }),
               "我只有一个 B站 号（主人=小肥鱼），允许用主人号当小肥鱼") : null) : null,
-          state.phase === "expired" ? h("p", { className: "qbw-err" }, "二维码已过期，请重新生成。") : null,
+          state.phase === "confirmed" ? h("div", null,
+            h("p", { style: { textAlign: "center", fontSize: "15px", color: "#67c23a", fontWeight: 600 } }, "✅ 登录成功"),
+            h("p", { style: { textAlign: "center" } },
+              `${state.account?.name || "（未取到昵称）"}（${state.account?.mid || "?"}）`),
+            h("p", { className: "qbw-hint", style: { textAlign: "center" } },
+              "已写入凭据。可以在「B站 登录账号」卡片点「核查登录」再确认一次；如果 B站 上改了名，核查会显示最新昵称。"),
+            state.account?.savedAt ? h("p", { className: "qbw-hint", style: { textAlign: "center" } }, `保存时间：${new Date(state.account.savedAt).toLocaleString("zh-CN", { hour12: false })}`) : null) : null,
+          state.phase === "expired" ? h("div", null,
+            h("p", { className: "qbw-err" }, "二维码已过期。"),
+            h("p", { className: "qbw-hint" }, "建议：点下面「重新生成」；如果一直过期，确认手机 B站 App 能正常扫码。")) : null,
           state.phase === "wrong" ? h("div", null,
             h("p", { className: "qbw-err" }, `✗ ${state.error || "扫错账号"}`),
             h("p", { className: "qbw-hint" }, "扫错号不会保存。要点：① 想用主人同一个号 → 勾下方「我只有一个 B站 号」再扫；② 想换到别的号 → 点下面「换号（清除旧凭据）」再扫。"),
             h("p", { className: "qbw-hint" }, state.hint || "")) : null,
-          state.phase === "error" ? h("p", { className: "qbw-err" }, `✗ ${state.error || "扫码失败"}`) : null,
+          state.phase === "error" ? h("div", null,
+            h("p", { className: "qbw-err" }, `✗ ${state.error || "扫码失败"}`),
+            h("p", { className: "qbw-hint" }, state.hint || "建议：点「重新生成」再试；仍失败请重启 DSH（旧代码可能没有扫码接口）。")) : null,
           notice ? h("p", { className: "qbw-hint", style: { textAlign: "center" } }, notice) : null,
           h("div", { className: "qbw-actions", style: { justifyContent: "center" } },
-            live ? null : h(Btn, { onClick: start }, "重新生成"),
+            state.phase === "confirmed" ? h(Btn, { onClick: close }, "完成") : null,
+            live || state.phase === "confirmed" ? null : h(Btn, { onClick: start }, "重新生成"),
             h(Btn, {
               kind: "qbw-btn2",
               onClick: async () => {
@@ -2921,6 +2972,24 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
       const [cookie, setCookie] = useState({ sessdata: "", bili_jct: "", buvid3: "" });
       const [cookieMsg, setCookieMsg] = useState("");
       const [qrFish, setQrFish] = useState(false);
+      const [accounts, setAccounts] = useState(null);
+      const [accountCheck, setAccountCheck] = useState({});
+      const loadAccounts = useCallback(async () => {
+        try { setAccounts(await api("/bili/accounts")); } catch { setAccounts(null); }
+      }, []);
+      useEffect(() => { loadAccounts(); }, [loadAccounts]);
+      const verifyAccount = async (target) => {
+        setAccountCheck((s) => ({ ...s, [target]: { busy: true } }));
+        try {
+          const r = await api("/bili/account/verify", { method: "POST", body: { target } });
+          setAccountCheck((s) => ({ ...s, [target]: r }));
+          if (r.ok) toast(`✓ ${target === "owner" ? "主人" : "小肥鱼"} 登录有效：${r.account?.name}（${r.account?.mid}）`);
+          else toast(`✗ 核查失败：${r.error || "原因不明"}`);
+          await loadAccounts();
+        } catch (e) {
+          setAccountCheck((s) => ({ ...s, [target]: { ok: false, error: e.message } }));
+        }
+      };
       const [deps, setDeps] = useState("");
       const [pending, setPending] = useState([]);
       const [pendingMsg, setPendingMsg] = useState("");
@@ -2937,6 +3006,28 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
         try { const r = await api("/bili/pending"); setPending(r.items ?? []); } catch {}
       }, []);
       useEffect(() => { loadPending(); }, [loadPending]);
+
+      const accountCard = h("div", { className: "qbw-card", style: { marginTop: "10px" } },
+        h("h4", null, "B站 登录账号"),
+        h("div", { className: "qbw-hint", style: { marginTop: "2px" } },
+          "显示扫码登录的账号；「核查」会读凭据文件再问一次 B站，确认登录还有效、mid 没串。"),
+        [["fish", "小肥鱼"], ["owner", "主人"]].map(([target, label]) => {
+          const acc = target === "owner" ? accounts?.owner : accounts?.fish;
+          const chk = accountCheck[target] || {};
+          return h("div", { key: target, style: { marginTop: "8px", padding: "8px 10px", border: "1px solid rgba(127,127,127,.2)", borderRadius: "8px" } },
+            h("div", { style: { fontWeight: 600 } },
+              `${label}：`,
+              acc?.configured ? `${acc.name || "（未取到昵称）"}（${acc.mid}）` : "未登录",
+              chk.busy ? h("span", { className: "qbw-hint" }, " 核查中…") : null),
+            acc?.savedAt ? h("div", { className: "qbw-hint" }, `保存时间：${new Date(acc.savedAt).toLocaleString("zh-CN", { hour12: false })}`) : null,
+            h("div", { style: { display: "flex", gap: "8px", marginTop: "6px", flexWrap: "wrap" } },
+              h(Btn, { kind: "qbw-btn2", onClick: () => verifyAccount(target), disabled: !!chk.busy || !acc?.configured }, "核查登录"),
+              target === "fish" ? h(Btn, { kind: "qbw-btn2", onClick: () => setQrFish(true) }, acc?.configured ? "重新扫码" : "扫码登录") : null),
+            chk.ok === true ? h("div", { className: "qbw-hint", style: { color: "#67c23a", marginTop: "4px" } },
+              `✓ 登录有效：${chk.account?.name || "（未取到昵称）"}（${chk.account?.mid}）`) : null,
+            chk.ok === false ? h("div", { className: "qbw-err", style: { marginTop: "4px" } },
+              `✗ ${chk.error || "核查失败"}${chk.hint ? `（建议：${chk.hint}）` : ""}`) : null);
+        }));
 
       const groups = query.trim()
         ? BILI_FIELDS.map((g) => ({ ...g, fields: g.fields.filter((f) => `${g.group} ${f.label} ${f.hint ?? ""} ${f.path.join(".")}`.toLowerCase().includes(query.trim().toLowerCase())) })).filter((g) => g.fields.length)
@@ -3018,6 +3109,7 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
                 h("input", { className: "qbw-input", placeholder: "buvid3（可空）", value: cookie.buvid3, onChange: (e) => setCookie((s) => ({ ...s, buvid3: e.target.value })) }),
                 h(Btn, { kind: "qbw-btn2", onClick: saveCookie, disabled: !!busy || !cookie.sessdata || !cookie.bili_jct }, "写入凭据"),
                 cookieMsg ? h("div", { className: cookieMsg.startsWith("✓") ? "qbw-ok" : "qbw-err" }, cookieMsg) : null)),
+          accountCard,
             h("div", { className: "qbw-card" }, h("h4", null, "待审核"),
               h("p", null, "她回复别人之前，草稿先到这儿；你点「发」才发。"),
               pending.length === 0 ? h("p", null, "（队列是空的）") : pending.map((x) => h("div", { key: x.id, className: "qbw-item", style: { marginTop: "6px" } },
@@ -3038,8 +3130,9 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           target: "fish",
           onClose: () => setQrFish(false),
           onConfirmed: async (account) => {
-            setQrFish(false);
             setCookieMsg(`✓ 已绑定 ${account.name || account.mid}（${account.mid}）`);
+            await loadAccounts();
+            await verifyAccount("fish");
             await reload();
           },
         }) : null);

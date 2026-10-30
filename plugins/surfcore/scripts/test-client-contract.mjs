@@ -403,4 +403,16 @@ assert.ok(source.includes('完全退出 DSH'), '提示要说明“完全退出�
 assert.ok(/setRestartHint\(\{ staged: true/.test(source), '暂存成功后设置重启提示');
 assert.ok(source.includes('下载完成 ≠ 已更新'), '更新卡片要有常驻提示');
 
+// ── B站 登录核查 + 管理员 UID 核查 + 长 UID（2026-10-30 用户要求）──
+assert.ok(source.includes('B站 登录账号'), 'B站 页要有登录账号卡片');
+assert.ok(source.includes('核查登录'), '登录账号卡片要有「核查登录」');
+assert.ok(/api\("\/bili\/account\/verify"/.test(source), '核查登录要调后端');
+assert.ok(source.includes('✅ 登录成功'), '扫码成功后弹窗要显示成功账号');
+assert.ok(source.includes('核查 UID 与昵称'), '管理员卡片要有 UID/昵称核查');
+assert.ok(/api\("\/bili\/verify-user"/.test(source), 'UID 核查要调后端');
+assert.ok(source.includes('4~20 位数字'), 'UID 输入要提示位数范围');
+assert.ok(source.includes('用 B站 昵称填上'), '昵称不一致要能一键填上');
+
+
+
 console.log('client contract tests OK');

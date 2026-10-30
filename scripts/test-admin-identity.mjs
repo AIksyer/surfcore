@@ -26,6 +26,11 @@ assert.equal(normalized.gentle, true, '温柔模式默认开');
 
 assert.equal(normalizeAdmin({ qq: 'abc' }).qq, '', '非数字 QQ 必须丢弃');
 assert.equal(normalizeAdmin({ biliMid: '12' }).biliMid, '', '过短 mid 必须丢弃');
+// 2026-10-30：B站 UID 变长，15~20 位必须能存进去；非数字仍要拒绝
+assert.equal(normalizeAdmin({ biliMid: '123456789012345' }).biliMid, '123456789012345', '15 位 mid 必须保留');
+assert.equal(normalizeAdmin({ biliMid: '12345678901234567890' }).biliMid, '12345678901234567890', '20 位 mid 必须保留');
+assert.equal(normalizeAdmin({ biliMid: '123456789012345678901' }).biliMid, '', '超长 mid 丢弃');
+assert.equal(normalizeAdmin({ biliMid: 'abc12345' }).biliMid, '', '含字母的 mid 丢弃');
 assert.equal(normalizeAdmin({ qq: 0 }).qq, '', '0 不是 QQ 号');
 assert.equal(normalizeAdmin({ qq: '12345678901234567890' }).qq, '', '超长 QQ 必须丢弃');
 assert.equal(normalizeAdmin({ qq: '123456789', gentle: false }).gentle, false);

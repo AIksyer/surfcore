@@ -4,6 +4,23 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.7.18] - 2026-10-30
+
+### 新增（B站 扫码登录可见/可核查；管理员 UID 支持长号）
+
+- **扫码成功**：弹窗内显示「✅ 登录成功 + 昵称（mid） + 保存时间」，点「完成」才关闭；
+- **登录核查**：B站 页新增「B站 登录账号」卡片（主人/小肥鱼各自昵称、mid、保存时间），
+  「核查登录」读凭据文件后再问一次 B站 nav 并核对 mid，返回
+  `bili.no-credentials / cookie-expired / mid-mismatch / verify-network` + 建议；
+- **UID/昵称核查**：管理员卡片新增「核查 UID 与昵称」——查 B站 公开名片比对真实昵称，
+  不一致给「用 B站 昵称填上」；
+- **长 UID**：`ADMIN_MID_RE` 放宽到 **4~20 位**；非法值保存时返回 `admin.mid-invalid` + 建议
+  （以前是静默清空，用户以为“填不进去”）；
+- **失败提示**：扫码启动失败带 `bili.qr-start-failed` + 建议；过期/失败文案补“下一步”。
+
+> 调查记录：[B站 登录核查与长 UID](docs/cases/2026-10-30-bili-login-uid-verify.md)
+
+
 ## [0.7.17] - 2026-10-30
 
 ### 修复（github.com 不通时：查不到新版本、下载必失败、反复弹窗）

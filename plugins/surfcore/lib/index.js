@@ -83,7 +83,7 @@ import { readWatchHistory } from '../tools/lib/watch-history.mjs';
 import { enrichWatchHistory } from '../tools/lib/watch-actions.mjs';
 import { scanPreferences } from '../tools/lib/pref-scan.mjs';
 import {
-  cancelQrLogin, closeAllQrLogins, pollQrLogin, readFishAccount, readOwnerAccount, startQrLogin,
+  cancelQrLogin, closeAllQrLogins, pollQrLogin, readFishAccount, readOwnerAccount, startQrLogin, verifyStoredCredentials,
 } from './bili-qr-login.mjs';
 import { fishGuardStateSummary } from '../tools/lib/fish-guard.mjs';
 import { summarizeQqFishGuard } from './qq-fish-guard.js';
@@ -790,6 +790,17 @@ export function apply(ctx) {
     // 合体层 admin 是唯一真相；旧格式（qq.ownerQQ / bili.owner）是投影。
     // 合并逻辑放在 src/admin-identity.js 的 projectAdminSave（纯函数，有单测），
     // 这里只负责把结果写回三份文件，避免「只改了一边」。
+    // 管理员 B站 UID：显式拒绝非法值，别静默清空（用户会以为"填不进去"）
+    const rawAdminMid = String(body?.unified?.admin?.biliMid ?? '').trim();
+    if (rawAdminMid && !/^\d{4,20}$/.test(rawAdminMid)) {
+      json(res, 400, {
+        ok: false, code: 'admin.mid-invalid',
+        error: `管理员 B站 UID「${rawAdminMid}」不合法`,
+        hint: 'B站 UID 是 4~20 位数字（个人空间地址 space.bilibili.com/<数字>）；不要带字母或空格',
+      });
+      return;
+    }
+
     const currentQq = readQqConfig().config;
     const currentBili = readBiliConfig().config;
     const currentUnifiedState = readUnified();
@@ -2602,10 +2613,74 @@ if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${writeOut('$
         json(res, 200, { ok: true, ...result });
       } catch (error) {
         pluginLog(`[扫码登录] 打开失败：${String(error?.message ?? error)}`);
-        json(res, 503, { ok: false, error: String(error?.message ?? error) });
+        json(res, 503, {
+          ok: false, code: 'bili.qr-start-failed',
+          error: String(error?.message ?? error),
+          hint: '确认本机有 Edge（扫码用 headless Edge 打开 B站 登录页）；再试一次或重启 DSH 后重试',
+        });
       }
       return;
     }
+    // 核查已登录账号：读文件 → 再问一次 B站 nav → 核对 mid（不是只信扫码那一刻）。
+    if (pathname.endsWith('/account/verify')) {
+      const target = body.target === 'fish' ? 'fish' : 'owner';
+      try {
+        const result = await verifyStoredCredentials(target);
+        json(res, 200, { ok: result.ok, target, ...result });
+      } catch (error) {
+        json(res, 500, {
+          ok: false, code: 'bili.verify-failed',
+          error: `核查失败：${String(error?.message ?? error).slice(0, 160)}`,
+          hint: '确认网络能访问 api.bilibili.com 后重试；持续失败请重新扫码',
+        });
+      }
+      return;
+    }
+
+    // 核查「UID 与昵称是否同一个人」：查 B站 公开名片，把真实昵称带回来比对。
+    if (pathname.endsWith('/verify-user')) {
+      const mid = String(body.mid ?? '').trim();
+      const name = String(body.name ?? '').trim();
+      if (!/^\d{4,20}$/.test(mid)) {
+        json(res, 400, {
+          ok: false, code: 'bili.mid-invalid',
+          error: `「${mid || '(空)'}」不是合法的 B站 UID`,
+          hint: 'B站 UID 是 4~20 位数字（在个人空间地址 space.bilibili.com/<数字> 里能看到）',
+        });
+        return;
+      }
+      try {
+        const res2 = await fetch(`https://api.bilibili.com/x/web-interface/card?mid=${encodeURIComponent(mid)}`, {
+          headers: { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36', referer: 'https://www.bilibili.com/' },
+          signal: AbortSignal.timeout(10_000),
+        });
+        const jsonBody = await res2.json().catch(() => null);
+        const actual = jsonBody?.data?.card;
+        if (!res2.ok || !actual?.mid) {
+          json(res, 200, {
+            ok: false, code: 'bili.user-not-found',
+            error: `B站 查不到 UID ${mid}${jsonBody?.code ? `（code ${jsonBody.code}）` : ''}`,
+            hint: '核对 UID 是否填错（个人空间地址里的数字）；B站 偶发风控时稍后重试',
+          });
+          return;
+        }
+        const actualName = String(actual.name ?? '');
+        const match = !name || actualName.trim() === name.trim();
+        json(res, 200, {
+          ok: true, mid: String(actual.mid), actualName, inputName: name, match,
+          error: match ? '' : `昵称对不上：UID ${mid} 的 B站 昵称是「${actualName}」，你填的是「${name}」`,
+          hint: match ? '' : '点「用 B站 昵称填上」自动改正；或确认 UID 是否填成了别人的',
+        });
+      } catch (error) {
+        json(res, 200, {
+          ok: false, code: 'bili.verify-network',
+          error: `查询 B站 失败：${String(error?.message ?? error).slice(0, 160)}`,
+          hint: '检查网络能否访问 api.bilibili.com；稍后重试',
+        });
+      }
+      return;
+    }
+
     // 换 B站 号：把旧凭据/对齐归档后清掉，允许重新扫码绑定（2026-10-27 用户反馈"换号被卡死"）
     if (pathname.endsWith('/account/reset')) {
       const target = body.target === 'owner' ? 'owner' : (body.target === 'both' ? 'both' : 'fish');

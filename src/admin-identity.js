@@ -20,8 +20,8 @@
 
 /** QQ 号：5~12 位数字（现行 QQ 号长度范围，避免把群号/随机数字当管理员）。 */
 export const ADMIN_QQ_RE = /^\d{5,12}$/;
-/** B站 mid：4~15 位数字（目前 8~10 位，留出历史 uid 的空间）。 */
-export const ADMIN_MID_RE = /^\d{4,15}$/;
+/** B站 mid：4~20 位数字（历史 uid 短、新号在变长；用户反馈 15 位填不进去）。 */
+export const ADMIN_MID_RE = /^\d{4,20}$/;
 
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object ?? {}, key);
 
