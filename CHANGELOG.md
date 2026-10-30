@@ -4,6 +4,23 @@
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 发布规则见 [docs/guides/VERSIONS.md](docs/guides/VERSIONS.md)。
 
+## [0.7.15] - 2026-10-30
+
+### 修复（云端语音“不行”到底卡在哪：换路兜底 + 失败分类 + 自检）
+
+- **换路兜底**：合成失败时按类型决定是否换到另一条 endpoint 重试（cloud ⇄ local）；
+  限流 / 音色映射错不换路；换路成功标 `degraded` 并在日志记录。
+- **失败分类**：新增 `src/voice-diagnostics.js`——
+  `voice.rate-limited` / `config-mapping` / `service-down` / `upstream-auth` /
+  `upstream-network` / `engine-failed` / `unknown`，每类带可执行 hint。
+- **失败留痕**：`state/voice-errors.log`（JSONL：route/code/stage/message/fallback）；
+  语音接口 `ok:false` 带 `code` + `hint`；限流错误带 `voice.rate-limited`，不再被当成“TTS 掉线”。
+- **三步自检**：桥接 `/api/voice/tts-check` + 语音页「语音自检」卡片——
+  服务可达 → 实际合成 → 发送前置（总闸/工具/额度），分别给结论（不真的发消息）。
+
+> 调查记录：[云端语音失败归因](docs/cases/2026-10-30-voice-cloud-fallback-diagnostics.md)
+
+
 ## [0.7.14] - 2026-10-30
 
 ### 新增（SnowLuma 手动指定安装位置）

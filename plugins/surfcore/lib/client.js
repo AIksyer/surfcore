@@ -3517,6 +3517,9 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
       const [packsDir, setPacksDir] = useState("");
       const [dirInput, setDirInput] = useState("");
       const [mirror, setMirror] = useState("");
+      // 语音自检：三步（服务/合成/发送前置）各给结论，避免"语音坏了"只能靠猜。
+      const [ttsCheck, setTtsCheck] = useState(null);
+      const [ttsChecking, setTtsChecking] = useState(false);
       const [rules, setRules] = useState(null);
       const [err, setErr] = useState("");
       const [busyId, setBusyId] = useState("");
@@ -3695,6 +3698,28 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
         await copyNetdisk();
       };
 
+      const runTtsCheck = async () => {
+        setTtsChecking(true); setTtsCheck(null);
+        try {
+          const r = await api("/voice/tts-check", { method: "POST", body: {} });
+          setTtsCheck(r);
+          if (toast) toast(r.ok ? "✓ 语音自检通过" : `✗ 自检发现问题：${(r.stages || []).find((x) => !x.ok)?.name || "未知"}`);
+        } catch (e) {
+          setTtsCheck({ ok: false, error: e.message, stages: [] });
+          if (toast) toast(`✗ 自检失败：${e.message}`);
+        } finally { setTtsChecking(false); }
+      };
+
+      const stageRow = (st) => h("div", {
+        key: st.name,
+        style: { marginTop: "6px", padding: "6px 8px", borderRadius: "6px", background: st.ok ? "rgba(103,194,58,.10)" : "rgba(192,57,43,.12)" },
+      },
+        h("div", { style: { fontWeight: 600 } },
+          `${st.ok ? "✅" : "❌"} ${st.name === "service" ? "服务" : st.name === "synth" ? "合成" : "发送前置"}`,
+          st.ms ? h("span", { style: { fontWeight: 400, opacity: 0.7, marginLeft: "6px" } }, `${st.ms}ms`) : null),
+        st.detail ? h("div", { className: "qbw-hint", style: { marginTop: "2px" } }, st.detail) : null,
+        st.hint ? h("div", { className: "qbw-hint", style: { marginTop: "2px" } }, `建议：${st.hint}`) : null);
+
       const act = async (id, action, body) => {
         setBusyId(id);
         setMsg((m) => ({ ...m, [id]: action === "install" ? "开始安装…" : "处理中…" }));
@@ -3847,6 +3872,16 @@ F("socialV2.voice.ffmpegPath", "ffmpeg 路径", "留空走 PATH", "text", { wide
           switchMsg ? h("div", { style: { fontSize: "12px", marginTop: "6px", opacity: 0.85 } }, switchMsg) : null,
           h("div", { style: { fontSize: "12px", opacity: 0.65, marginTop: "6px" } }, "只能运行一个；切换会自动停掉另一个。")),
         packs.map(card),
+        h("div", { className: "qbw-card", style: { marginTop: "10px" } },
+          h("h4", null, "语音自检"),
+          h("div", { className: "qbw-hint", style: { marginTop: "2px" } },
+            "三步分开看：服务是否在跑 → 能不能合成 → 能不能发（不真的发消息）。出问题时把结果发给开发者。"),
+          h("div", { className: "qbw-actions", style: { marginTop: "8px" } },
+            h(Btn, { onClick: runTtsCheck, disabled: ttsChecking }, ttsChecking ? "检测中…（合成可能要几秒）" : "开始自检")),
+          ttsCheck ? h("div", { style: { marginTop: "8px" } },
+            (ttsCheck.stages || []).map(stageRow),
+            ttsCheck.ok ? null : h("div", { className: "qbw-hint", style: { marginTop: "6px" } }, `route=${ttsCheck.route || "?"} · ${ttsCheck.error || ""}`)
+          ) : null),
         h("div", { style: { marginTop: "10px", padding: "10px 12px", borderRadius: "10px", border: "1px solid rgba(230,162,60,.45)", background: "rgba(230,162,60,.08)" } },
           h("div", { style: { fontSize: "13px", fontWeight: 600 } }, "网络不稳定装不上？用网盘下载离线包（本地包 / 云端包都适用）"),
           h("div", { style: { fontSize: "12px", opacity: 0.85, marginTop: "2px" } },

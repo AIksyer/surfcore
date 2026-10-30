@@ -32,6 +32,7 @@ import { createVoicePacks } from './voice-packs.js';
 import { ImportError } from './voice-pack-import.js';
 import { discoverSnowLumaConnection, persistSnowLumaEndpoint, persistToken } from './snowluma-conn.js';
 import { synthesizeToFile } from './voice-tts.js';
+import { classifyVoiceError, pickFallbackRoute } from './voice-diagnostics.js';
 import { hardenDir, manualDirCommand } from './state-acl.mjs';
 import { extractForwardIds, forwardIdFromData, sanitizeForwardId, formatForwardResponse } from './forward.js';
 import { buildProvenanceBlock, buildSelfIdentityBlock, selfIdentityPath } from './self-identity.js';
@@ -2021,28 +2022,80 @@ async function main() {
     };
   }
 
+  /** 语音失败留痕（JSONL）：以前失败只抛一句人话、不进日志，事后无法判断谁的锅。 */
+  function logVoiceError(record) {
+    try {
+      const file = path.join(STATE_DIR, 'voice-errors.log');
+      fs.appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), ...record }) + String.fromCharCode(10));
+    } catch {}
+  }
+
+  /** 给错误补上 code/hint/stage，让上层接口能把「谁的锅」写清楚（AGENTS 1.7）。 */
+  function codedVoiceError(error, info = null) {
+    const message = error?.message ?? String(error);
+    const meta = info ?? classifyVoiceError(message);
+    const err = error instanceof Error ? error : new Error(message);
+    err.code = meta.code;
+    err.stage = meta.stage;
+    err.hint = meta.hint;
+    return err;
+  }
+
   /**
    * text → 本地 wav。AI 通道与操作者通道共用，抛出的错误已经是可直接展示的句子。
    */
   async function synthesizeVoiceText(text, { character = '', voice = '', route = '' } = {}) {
     const vc = voiceCfg();
     const say = String(text ?? '').trim();
-    if (!say) throw new Error('要合成的内容是空的');
-    if (!vc.tts.enabled) throw new Error('语音合成未开启（socialV2.voice.tts.enabled）');
-    if (say.length > vc.tts.maxChars) {
-      throw new Error(`要说的话最多 ${vc.tts.maxChars} 字（收到 ${say.length}）`);
+    if (!say) throw codedVoiceError(new Error('要合成的内容是空的'));
+    if (!vc.tts.enabled) {
+      const err = new Error('语音合成未开启（socialV2.voice.tts.enabled）');
+      err.code = 'voice.tts-disabled'; err.stage = 'config';
+      err.hint = '设置 → SurfCore → 全部参数 → socialV2.voice.tts.enabled 打开';
+      throw err;
     }
-    const r = await synthesizeToFile({
+    if (say.length > vc.tts.maxChars) throw codedVoiceError(new Error(`要说的话最多 ${vc.tts.maxChars} 字（收到 ${say.length}）`));
+
+    const primary = ['local', 'cloud'].includes(String(route)) ? String(route) : vc.tts.route;
+    const endpointOf = (r) => String(vc.tts.endpoints?.[r] || vc.tts.baseUrl || '').replace(/\/+$/, '');
+
+    const attempt = (r) => synthesizeToFile({
       text: say,
       character: voice ? '' : character || vc.tts.character,
       voice: voice || '',
-      baseUrl: (route && vc.tts.endpoints?.[route]) || vc.tts.endpoints?.[vc.tts.route] || vc.tts.baseUrl,
+      baseUrl: endpointOf(r),
       timeoutMs: vc.tts.timeoutMs,
-      // 换了音色/映射就把它 +1，否则会一直命中旧音色的缓存
       cacheVersion: vc.tts.cacheVersion ?? null,
       outDir: vc.tts.dir
     });
-    return { path: r.path, via: 'tts', ttsCached: r.cached, ttsDurationMs: r.durationMs };
+
+    let first = null;
+    try {
+      first = await attempt(primary);
+    } catch (error) {
+      const info = classifyVoiceError(error?.message ?? error);
+      const fallback = pickFallbackRoute(primary, vc.tts.endpoints, info.code);
+      logVoiceError({
+        scope: 'synth', route: primary, code: info.code, stage: info.stage,
+        message: String(error?.message ?? error).slice(0, 400), fallback: fallback || '',
+      });
+      if (fallback) {
+        // 云端抖动时换到本地另一条路（或反过来），别让整条语音失败。
+        try {
+          const second = await attempt(fallback);
+          logVoiceError({ scope: 'synth', route: fallback, code: 'voice.recovered', stage: 'fallback', message: `主路 ${primary} 失败后已用 ${fallback} 合成成功` });
+          return { path: second.path, via: 'tts', ttsCached: second.cached, ttsDurationMs: second.durationMs, degraded: true, degradedFrom: primary, route: fallback };
+        } catch (error2) {
+          const info2 = classifyVoiceError(error2?.message ?? error2);
+          logVoiceError({ scope: 'synth', route: fallback, code: info2.code, stage: info2.stage, message: String(error2?.message ?? error2).slice(0, 400), fallback: '' });
+          const err = codedVoiceError(error2, info2);
+          err.message = `${err.message}（主路 ${primary} 也失败：${String(error?.message ?? error).slice(0, 160)}）`;
+          throw err;
+        }
+      }
+      throw codedVoiceError(error, info);
+    }
+    return { path: first.path, via: 'tts', ttsCached: first.cached, ttsDurationMs: first.durationMs, route: primary };
   }
 
   function voiceLibrary() {
@@ -2174,12 +2227,16 @@ async function main() {
     const bucket = voiceSendTimes.get(scopeKey) ?? [];
     const inMinute = bucket.filter((t) => now - t < 60000);
     const inHour = bucket.filter((t) => now - t < 3600000);
-    if (cfgV.maxPerMinute > 0 && inMinute.length + 1 > cfgV.maxPerMinute) {
-      throw new Error(`语音发送频率超限（每分钟最多 ${cfgV.maxPerMinute} 条），请稍后再试`);
-    }
-    if (cfgV.maxPerHour > 0 && inHour.length + 1 > cfgV.maxPerHour) {
-      throw new Error(`语音发送频率超限（每小时最多 ${cfgV.maxPerHour} 条），请稍后再试`);
-    }
+    // 限流不是故障：带上 code/hint，避免被转述成“TTS 掉线”（2026-10-30 实测踩到）。
+    const limited = (per, n) => {
+      const err = new Error(`语音发送频率超限（每${per}最多 ${n} 条），请稍后再试`);
+      err.code = 'voice.rate-limited';
+      err.stage = 'send';
+      err.hint = '这是发送限流，不是 TTS 故障：等一会儿再发，或调大 socialV2.voice.maxPerMinute / maxPerHour';
+      return err;
+    };
+    if (cfgV.maxPerMinute > 0 && inMinute.length + 1 > cfgV.maxPerMinute) throw limited('分钟', cfgV.maxPerMinute);
+    if (cfgV.maxPerHour > 0 && inHour.length + 1 > cfgV.maxPerHour) throw limited('小时', cfgV.maxPerHour);
   }
 
   /** 语音真正发出后记账（顺带裁掉超过 1 小时的旧时间戳，避免数组无界增长）。 */
@@ -6468,6 +6525,56 @@ async function main() {
         // 与 /api/send/* 的 agent 通道分开：操作者可能不在任何 QQ 会话里，
         // 所以不套「会话/模式」闸门，但白名单 + 语音限流 + 文件名审计一个都不少。
         // ── 语音触发规则（谁能让 AI 出声、频率上限）────────────────────
+        // 语音自检：把「服务 → 合成 → 发送前置」分成三步各自给结论（2026-10-30 P1）。
+        if (url.pathname === '/api/voice/tts-check' && req.method === 'POST') {
+          const vc = voiceCfg();
+          const route = ['local', 'cloud'].includes(String(vc.tts.route)) ? vc.tts.route : 'local';
+          const endpoint = String(vc.tts.endpoints?.[route] || vc.tts.baseUrl || '').replace(/\/+$/, '');
+          const stages = [];
+          // 1) 服务可达
+          {
+            const t0 = Date.now();
+            try {
+              const r = await fetch(`${endpoint}/v1/health`, { signal: AbortSignal.timeout(3000) });
+              const body = await r.json().catch(() => null);
+              stages.push({ name: 'service', ok: r.ok, ms: Date.now() - t0, detail: r.ok ? `HTTP ${r.status} · ${String(body?.engine || route)}` : `HTTP ${r.status}` });
+            } catch (error) {
+              stages.push({ name: 'service', ok: false, ms: Date.now() - t0, code: 'voice.service-down', detail: String(error?.message ?? error).slice(0, 160) });
+            }
+          }
+          // 2) 实际合成（走与 QQ 相同的 synthesizeVoiceText，含换路重试）
+          {
+            const t0 = Date.now();
+            try {
+              const r = await synthesizeVoiceText('语音自检', { route });
+              stages.push({
+                name: 'synth', ok: true, ms: Date.now() - t0,
+                detail: `${r.degraded ? `已换路 ${r.degradedFrom}→${r.route}` : `route=${r.route}`} · ${r.ttsCached ? '缓存' : '实时合成'} · ${Math.round((r.ttsDurationMs || 0))}ms`,
+              });
+            } catch (error) {
+              const info = classifyVoiceError(error?.message ?? error);
+              stages.push({ name: 'synth', ok: false, ms: Date.now() - t0, code: info.code, hint: info.hint, detail: String(error?.message ?? error).slice(0, 220) });
+            }
+          }
+          // 3) 发送前置（不真的发消息）：总闸、工具、限流额度
+          {
+            const v = voiceCfg();
+            const toolOn = Boolean(v?.enabled) && cfg.socialV2?.tools?.sendVoice !== false;
+            const bucket = voiceSendTimes.get('selftest') ?? [];
+            const now = Date.now();
+            const perMin = bucket.filter((t) => now - t < 60000).length;
+            const perHour = bucket.filter((t) => now - t < 3600000).length;
+            stages.push({
+              name: 'send', ok: toolOn && v.enabled,
+              detail: `${v.enabled ? '语音可用' : '语音总闸已关'} · 工具${cfg.socialV2?.tools?.sendVoice === false ? '关' : '开'} · 本分钟已发 ${perMin}/${v.maxPerMinute} · 本小时 ${perHour}/${v.maxPerHour}`,
+              code: toolOn && v.enabled ? '' : 'voice.tool-disabled',
+              hint: toolOn && v.enabled ? '' : '设置 → SurfCore → 语音：打开总闸与「发语音」工具',
+            });
+          }
+          sendJson({ ok: stages.every((x) => x.ok), route, endpoint, stages });
+          return;
+        }
+
         if (url.pathname === '/api/voice/rules') {
           const cfgFile = path.join(ROOT, 'config.json');
           try {
@@ -6679,7 +6786,7 @@ async function main() {
               : resolveVoicePathForOperator(body.file ?? body.path ?? '');
           } catch (error) {
             const msg = error?.message ?? String(error);
-            sendJson({ ok: false, error: msg }, /语音合成|TTS/.test(msg) ? 502 : 400);
+            sendJson({ ok: false, code: error?.code || '', hint: error?.hint || '', error: msg }, /语音合成|TTS|voice\./.test(msg) ? 502 : 400);
             return;
           }
           // 音量参数先校验（写错了当场告诉你，不要等到发的时候才炸）
@@ -6830,7 +6937,7 @@ async function main() {
             } catch (error) {
               const msg = error?.message ?? String(error);
               const code = /频率超限/.test(msg) ? 429 : /语音合成|TTS/.test(msg) ? 502 : 400;
-              sendJson({ ok: false, error: msg }, code);
+              sendJson({ ok: false, code: error?.code || '', hint: error?.hint || '', error: msg }, code);
               return;
             }
           } else {

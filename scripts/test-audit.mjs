@@ -164,6 +164,8 @@ const tests = [
   // 取不到远端版本号必须是 unknown，不能显示"最新"。
   // 语音三闸门 + 配置双写（2026-10-29 复盘）：工具常注册、拒绝带 code/hint、保存带戳防覆盖。
   // 安装清单只能含 git 跟踪文件（2026-10-30：脏清单导致 zip 更新 100% 失败）。
+  // 语音失败分类/换路/自检接线（2026-10-30 P0+P1）。
+  'test-voice-diagnostics.mjs',
   'test-release-manifest.mjs',
   'test-voice-gates.mjs',
   'test-update-apply-result.mjs',

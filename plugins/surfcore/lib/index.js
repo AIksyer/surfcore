@@ -1884,6 +1884,15 @@ export function apply(ctx) {
   // 语音：把面板请求原样转发给桥接的 /api/voice/*（语音包安装、启停、规则）。
   // 插件自己不做业务，只负责带控制台令牌转发，桥接那边怎么改这里都不用动。
   async function handleVoice(req, res, url) {
+    // 语音自检：三步（服务/合成/发送前置）分别给结论，避免"语音坏了"只能靠猜。
+    if (url.pathname === `${API_PREFIX}/voice/tts-check`) {
+      if (String(req.method || 'GET').toUpperCase() !== 'POST') { json(res, 405, { ok: false, code: 'METHOD_NOT_ALLOWED', error: '只支持 POST' }); return; }
+      const result = await callBridge('/api/voice/tts-check', { method: 'POST', body: '{}', timeoutMs: 90_000 });
+      const data = result.data ?? { ok: false, code: 'BRIDGE_UNAVAILABLE', error: result.error || '桥接不可用', hint: '确认 QQ 桥接在运行（设置 → 状态）' };
+      json(res, result.status || 200, data);
+      return;
+    }
+
     const suffix = url.pathname.slice(`${API_PREFIX}/voice`.length) || '';
     const method = String(req.method || 'GET').toUpperCase();
     // 网盘离线包入口：Electron 里 target=_blank 会被拦，统一由宿主打开浏览器。
